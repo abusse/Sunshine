@@ -34,6 +34,10 @@ extern "C" {
 
 safe::mail_t mail::man;
 
+#if defined(__APPLE__)
+#include <ApplicationServices/ApplicationServices.h>
+#endif
+
 using namespace std::literals;
 namespace bl = boost::log;
 
@@ -114,7 +118,33 @@ std::map<std::string_view, std::function<int(const char *name, int argc, char **
   { "help"sv, help::entry }
 };
 
+#if defined(__APPLE__)
+// On macOS, the main CFRunLoop has to run on the main thread,
+// therefore, this wrapping of the main function and the diversion
+// of the orginal main thread to a child is unavoidable.
+int real_main(int argc, char *argv[]);
+
 int main(int argc, char *argv[]) {
+  int result = 0;
+  bool exit = false;
+  
+  std::thread t([&](){
+    result = real_main(argc, argv);
+    exit = true;
+  });
+  
+  while(!exit) {
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 5, false);
+  }
+  
+  return result;
+}
+
+int real_main(int argc, char *argv[]) {
+#else
+int main(int argc, char *argv[]) {
+#endif
+
   mail::man = std::make_shared<safe::mail_raw_t>();
 
   if(config::parse(argc, argv)) {

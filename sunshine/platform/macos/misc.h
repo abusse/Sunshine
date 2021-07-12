@@ -1,0 +1,4 @@
+#ifndef SUNSHINE_PLATFORM_MISC_H
+#define SUNSHINE_PLATFORM_MISC_H
+
+#endif

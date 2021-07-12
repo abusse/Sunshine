@@ -20,6 +20,21 @@ if(WIN32)
 		PQOS_FLOWID=UINT32*
 		QOS_NON_ADAPTIVE_FLOW=2)
 endif()
+if(APPLE)
+	macro(ADD_FRAMEWORK fwname appname)
+    find_library(FRAMEWORK_${fwname}
+    NAMES ${fwname}
+    PATHS ${CMAKE_OSX_SYSROOT}/System/Library
+    PATH_SUFFIXES Frameworks
+    NO_DEFAULT_PATH)
+    if( ${FRAMEWORK_${fwname}} STREQUAL FRAMEWORK_${fwname}-NOTFOUND)
+        MESSAGE(ERROR ": Framework ${fwname} not found")
+    else()
+        TARGET_LINK_LIBRARIES(${appname} "${FRAMEWORK_${fwname}}/${fwname}")
+        MESSAGE(STATUS "Framework ${fwname} found at ${FRAMEWORK_${fwname}}")
+    endif()
+	endmacro(ADD_FRAMEWORK)
+endif()
 add_subdirectory(third-party/moonlight-common-c/enet)
 
 find_package(Threads REQUIRED)
@@ -102,6 +117,42 @@ if(WIN32)
 
 	set_source_files_properties(third-party/ViGEmClient/src/ViGEmClient.cpp PROPERTIES COMPILE_DEFINITIONS "UNICODE=1;ERROR_INVALID_DEVICE_OBJECT_PARAMETER=650")
 	set_source_files_properties(third-party/ViGEmClient/src/ViGEmClient.cpp PROPERTIES COMPILE_FLAGS "-Wno-unknown-pragmas -Wno-misleading-indentation -Wno-class-memaccess")
+elseif(APPLE)
+	add_compile_definitions(SUNSHINE_PLATFORM="macos")
+	list(APPEND SUNSHINE_DEFINITIONS APPS_JSON="apps_mac.json")
+	link_directories(/opt/local/lib)
+	ADD_DEFINITIONS(-DBOOST_LOG_DYN_LINK)
+
+	find_package(FFmpeg REQUIRED)
+	FIND_LIBRARY(APP_SERVICES_LIBRARY ApplicationServices )
+	FIND_LIBRARY(AV_FOUNDATION_LIBRARY AVFoundation )
+	FIND_LIBRARY(AUDIO_TOOLBOX_LIBRARY AudioToolbox )
+	FIND_LIBRARY(CORE_MEDIA_LIBRARY CoreMedia )
+	FIND_LIBRARY(CORE_AUDIO_LIBRARY CoreAudio )
+	FIND_LIBRARY(CORE_VIDEO_LIBRARY CoreVideo )
+	FIND_LIBRARY(FOUNDATION_LIBRARY Foundation )
+	list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
+		${APP_SERVICES_LIBRARY}
+		${AV_FOUNDATION_LIBRARY}
+		${AUDIO_TOOLBOX_LIBRARY}
+		${CORE_MEDIA_LIBRARY}
+		${CORE_AUDIO_LIBRARY}
+		${CORE_VIDEO_LIBRARY}
+		${FOUNDATION_LIBRARY})
+
+	set(PLATFORM_TARGET_FILES
+		sunshine/platform/macos/av_audio.h
+		sunshine/platform/macos/av_audio.m
+		sunshine/platform/macos/av_video.h
+		sunshine/platform/macos/av_video.m
+		sunshine/platform/macos/display.mm
+		sunshine/platform/macos/input.cpp
+		sunshine/platform/macos/misc.cpp
+		sunshine/platform/macos/misc.h
+		sunshine/platform/macos/publish.cpp
+		sunshine/platform/macos/TPCircularBuffer/TPCircularBuffer.c
+		sunshine/platform/macos/TPCircularBuffer/TPCircularBuffer.h
+		${CMAKE_CURRENT_SOURCE_DIR}/assets/Info.plist)
 else()
 	add_compile_definitions(SUNSHINE_PLATFORM="linux")
 	list(APPEND SUNSHINE_DEFINITIONS APPS_JSON="apps_linux.json")
@@ -153,7 +204,7 @@ endif()
 
 add_subdirectory(third-party/cbs)
 
-set(Boost_USE_STATIC_LIBS ON)
+#set(Boost_USE_STATIC_LIBS ON)
 find_package(Boost COMPONENTS log filesystem REQUIRED)
 
 set(SUNSHINE_TARGET_FILES
@@ -237,7 +288,6 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
 		libminiupnpc-static
 		${CBS_EXTERNAL_LIBRARIES}
 		${CMAKE_THREAD_LIBS_INIT}
-		stdc++fs
 		enet
 		opus
 		${FFMPEG_LIBRARIES}
@@ -247,8 +297,12 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
 
 list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ASSETS_DIR="${SUNSHINE_ASSETS_DIR}")
 add_executable(sunshine ${SUNSHINE_TARGET_FILES})
-target_link_libraries(sunshine ${SUNSHINE_EXTERNAL_LIBRARIES})
+target_link_libraries(sunshine ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
 target_compile_definitions(sunshine PUBLIC ${SUNSHINE_DEFINITIONS})
 set_target_properties(sunshine PROPERTIES CXX_STANDARD 17)
+
+if(APPLE)
+	target_link_options(sunshine PRIVATE LINKER:-sectcreate,__TEXT,__info_plist,${CMAKE_CURRENT_SOURCE_DIR}/assets/Info.plist)
+endif()
 
 target_compile_options(sunshine PRIVATE ${SUNSHINE_COMPILE_OPTIONS})

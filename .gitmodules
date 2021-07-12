@@ -10,3 +10,6 @@
 [submodule "third-party/miniupnp"]
 	path = third-party/miniupnp
 	url = https://github.com/miniupnp/miniupnp
+[submodule "sunshine/platform/macos/TPCircularBuffer"]
+	path = sunshine/platform/macos/TPCircularBuffer
+	url = https://github.com/michaeltyson/TPCircularBuffer

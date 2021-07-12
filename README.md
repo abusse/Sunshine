@@ -9,6 +9,7 @@ Sunshine is a Gamestream host for Moonlight
 
 # Building
 - [Linux](README.md#linux)
+- [MacOS](README.md#macos)
 - [Windows](README.md#windows-10)
 
 ## Linux
@@ -60,6 +61,29 @@ sunshine needs access to uinput to create mouse and gamepad events:
  	1. `$ pacmd list-sources | grep "name:"` or `$ pactl info | grep Source` if running pipewire.
 	2. Copy the name to the configuration option "audio_sink"
 	3. restart sunshine
+
+## macOS
+
+### Requirements:
+macOS Big Sur:
+
+Using [MacPorts](https://www.macports.org), install the following
+```
+sudo port install cmake boost libopus ffmpeg
+```
+
+### Compilation:
+- `git clone https://github.com/loki-47-6F-64/sunshine.git --recurse-submodules`
+- `cd sunshine && mkdir build && cd build`
+- `cmake -DBOOST_ROOT=[boost path] ..`
+- `make -j ${nproc}`
+
+
+### Setup:
+- `assets/sunshine.conf` is an example configuration file. Modify it as you see fit, then use it by running: 
+	`sunshine path/to/sunshine.conf`
+- `assets/apps.json` is an [example](README.md#application-list) of a list of applications that are started just before running a stream
+- Sunshine can only access microphones on macOS due to system limitations. To stream system audio use [Soundflower](https://github.com/mattingalls/Soundflower) or [BlackHole](https://github.com/ExistentialAudio/BlackHole) and select their sink as audio device in `sunshine.conf`
 
 ## Windows 10
 
