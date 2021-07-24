@@ -9,13 +9,14 @@
 #define kBufferLength 4096
 
 @interface AVAudio : NSObject <AVCaptureAudioDataOutputSampleBufferDelegate> {
-  @public TPCircularBuffer audioSampleBuffer;
+@public
+  TPCircularBuffer audioSampleBuffer;
 }
 
-@property (nonatomic, assign) NSString *sourceName;
-@property (nonatomic, assign) AVCaptureSession *audioCaptureSession;
-@property (nonatomic, assign) AVCaptureConnection *audioConnection;
-@property (nonatomic, assign) NSCondition *samplesArrivedSignal;
+@property(nonatomic, assign) NSString *sourceName;
+@property(nonatomic, assign) AVCaptureSession *audioCaptureSession;
+@property(nonatomic, assign) AVCaptureConnection *audioConnection;
+@property(nonatomic, assign) NSCondition *samplesArrivedSignal;
 
 + (NSArray *)microphoneNames;
 

@@ -1,9 +1,9 @@
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <net/if_dl.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 
 #include <pwd.h>
 #include <unistd.h>
@@ -83,22 +83,22 @@ std::pair<std::uint16_t, std::string> from_sockaddr_ex(const sockaddr *const ip_
 std::string get_mac_address(const std::string_view &address) {
   auto ifaddrs = get_ifaddrs();
 
-  for (auto pos = ifaddrs.get(); pos != nullptr; pos = pos->ifa_next) {
-    if (pos->ifa_addr && address == from_sockaddr(pos->ifa_addr)) {
+  for(auto pos = ifaddrs.get(); pos != nullptr; pos = pos->ifa_next) {
+    if(pos->ifa_addr && address == from_sockaddr(pos->ifa_addr)) {
       BOOST_LOG(verbose) << "Looking for MAC of "sv << pos->ifa_name;
 
       struct ifaddrs *ifap, *ifaptr;
       unsigned char *ptr;
       std::string mac_address;
 
-      if (getifaddrs(&ifap) == 0) {
-        for (ifaptr = ifap; ifaptr != NULL; ifaptr = (ifaptr)->ifa_next) {
-          if (!strcmp((ifaptr)->ifa_name, pos->ifa_name) && (((ifaptr)->ifa_addr)->sa_family == AF_LINK)) {
+      if(getifaddrs(&ifap) == 0) {
+        for(ifaptr = ifap; ifaptr != NULL; ifaptr = (ifaptr)->ifa_next) {
+          if(!strcmp((ifaptr)->ifa_name, pos->ifa_name) && (((ifaptr)->ifa_addr)->sa_family == AF_LINK)) {
             ptr = (unsigned char *)LLADDR((struct sockaddr_dl *)(ifaptr)->ifa_addr);
             char buff[100];
 
             snprintf(buff, sizeof(buff), "%02x:%02x:%02x:%02x:%02x:%02x",
-                     *ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3), *(ptr + 4), *(ptr + 5));
+              *ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3), *(ptr + 4), *(ptr + 5));
             mac_address = buff;
             break;
           }
@@ -106,7 +106,7 @@ std::string get_mac_address(const std::string_view &address) {
 
         freeifaddrs(ifap);
 
-        if (ifaptr != NULL) {
+        if(ifaptr != NULL) {
           BOOST_LOG(verbose) << "Found MAC of "sv << pos->ifa_name << ": "sv << mac_address;
           return mac_address;
         }
@@ -119,4 +119,3 @@ std::string get_mac_address(const std::string_view &address) {
   return "00:00:00:00:00:00"s;
 }
 } // namespace platf
-

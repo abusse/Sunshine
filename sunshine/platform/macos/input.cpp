@@ -1,9 +1,9 @@
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
-#include <algorithm>
 
-#include "sunshine/platform/common.h"
 #include "sunshine/main.h"
+#include "sunshine/platform/common.h"
 #include "sunshine/utility.h"
 
 #import <ApplicationServices/ApplicationServices.h>
@@ -24,7 +24,7 @@ struct KeyCodeMap {
 };
 
 // Customized less operator for using std::lower_bound() on a KeyCodeMap array.
-bool operator<(const KeyCodeMap& a, const KeyCodeMap& b) {
+bool operator<(const KeyCodeMap &a, const KeyCodeMap &b) {
   return a.winKeycode < b.winKeycode;
 }
 
@@ -201,12 +201,12 @@ const KeyCodeMap kKeyCodesMap[] = {
 int keysym(int keycode) {
   KeyCodeMap from;
 
-  from.winKeycode = keycode;
+  from.winKeycode       = keycode;
   const KeyCodeMap *ptr = std::lower_bound(
-      kKeyCodesMap, kKeyCodesMap + sizeof(kKeyCodesMap) / sizeof(kKeyCodesMap[0]), from);
+    kKeyCodesMap, kKeyCodesMap + sizeof(kKeyCodesMap) / sizeof(kKeyCodesMap[0]), from);
 
-  if (ptr >= kKeyCodesMap + sizeof(kKeyCodesMap) / sizeof(kKeyCodesMap[0]) ||
-      ptr->winKeycode != keycode || ptr->macKeycode == -1) {
+  if(ptr >= kKeyCodesMap + sizeof(kKeyCodesMap) / sizeof(kKeyCodesMap[0]) ||
+     ptr->winKeycode != keycode || ptr->macKeycode == -1) {
     return -1;
   }
 
@@ -218,28 +218,28 @@ void keyboard(input_t &input, uint16_t modcode, bool release) {
 
   BOOST_LOG(debug) << "got keycode: "sv << modcode << ", translated to: " << key << ", release:" << release;
 
-  if (key < 0) {
+  if(key < 0) {
     return;
   }
 
   auto keyboard = ((input_raw_t *)input.get());
 
-  switch (key) {
-    case kVK_Shift:
-      keyboard->kb_flags = release ? keyboard->kb_flags & ~kCGEventFlagMaskShift : keyboard->kb_flags | kCGEventFlagMaskShift;
-      return;
+  switch(key) {
+  case kVK_Shift:
+    keyboard->kb_flags = release ? keyboard->kb_flags & ~kCGEventFlagMaskShift : keyboard->kb_flags | kCGEventFlagMaskShift;
+    return;
 
-    case kVK_Command:
-      keyboard->kb_flags = release ? keyboard->kb_flags & ~kCGEventFlagMaskCommand : keyboard->kb_flags | kCGEventFlagMaskCommand;
-      return;
+  case kVK_Command:
+    keyboard->kb_flags = release ? keyboard->kb_flags & ~kCGEventFlagMaskCommand : keyboard->kb_flags | kCGEventFlagMaskCommand;
+    return;
 
-    case kVK_Option:
-      keyboard->kb_flags = release ? keyboard->kb_flags & ~kCGEventFlagMaskAlternate : keyboard->kb_flags | kCGEventFlagMaskAlternate;
-      return;
+  case kVK_Option:
+    keyboard->kb_flags = release ? keyboard->kb_flags & ~kCGEventFlagMaskAlternate : keyboard->kb_flags | kCGEventFlagMaskAlternate;
+    return;
   }
 
 
-  CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);
+  CGEventSourceRef source    = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);
   CGEventRef saveCommandDown = CGEventCreateKeyboardEvent(source, keysym(modcode), !release);
   CGEventSetFlags(saveCommandDown, keyboard->kb_flags);
 
@@ -266,7 +266,7 @@ void gamepad(input_t &input, int nr, const gamepad_state_t &gamepad_state) {
 // returns current mouse location:
 CGPoint get_mouse_loc() {
   CGEventRef event = CGEventCreate(NULL);
-  CGPoint cursor = CGEventGetLocation(event);
+  CGPoint cursor   = CGEventGetLocation(event);
 
   CFRelease(event);
   return cursor;
@@ -295,29 +295,29 @@ void abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y)
 
 void button_mouse(input_t &input, int button, bool release) {
   CGMouseButton macButton;
-  switch (button) {
-    case 1:
-      macButton = kCGMouseButtonLeft;
-      break;
-    case 2:
-      macButton = kCGMouseButtonCenter;
-      break;
-    case 3:
-      macButton = kCGMouseButtonRight;
-      break;
-    default:
-      BOOST_LOG(warning) << "Unsupported mouse button for MacOS: "sv << button;
-      return;
+  switch(button) {
+  case 1:
+    macButton = kCGMouseButtonLeft;
+    break;
+  case 2:
+    macButton = kCGMouseButtonCenter;
+    break;
+  case 3:
+    macButton = kCGMouseButtonRight;
+    break;
+  default:
+    BOOST_LOG(warning) << "Unsupported mouse button for MacOS: "sv << button;
+    return;
   }
-  
+
   mouse_event(macButton, release ? kCGEventOtherMouseUp : kCGEventOtherMouseDown, get_mouse_loc());
 }
 
 void scroll(input_t &input, int high_res_distance) {
   CGEventRef upEvent = CGEventCreateScrollWheelEvent(
-      NULL,
-      kCGScrollEventUnitPixel,
-      2, high_res_distance > 0 ? 1 : -1 , high_res_distance);
+    NULL,
+    kCGScrollEventUnitPixel,
+    2, high_res_distance > 0 ? 1 : -1, high_res_distance);
   CGEventPost(kCGHIDEventTap, upEvent);
   CFRelease(upEvent);
 }
@@ -339,4 +339,4 @@ void freeInput(void *p) {
 std::unique_ptr<deinit_t> init() {
   return std::make_unique<deinit_t>();
 }
-}
+} // namespace platf

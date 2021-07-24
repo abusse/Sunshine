@@ -1802,7 +1802,7 @@ platf::mem_type_e map_dev_type(AVHWDeviceType type) {
   case AV_HWDEVICE_TYPE_CUDA:
     return platf::mem_type_e::cuda;
   case AV_HWDEVICE_TYPE_VIDEOTOOLBOX:
-      return platf::mem_type_e::videotoolbox;
+    return platf::mem_type_e::videotoolbox;
   case AV_HWDEVICE_TYPE_NONE:
     return platf::mem_type_e::system;
   default:

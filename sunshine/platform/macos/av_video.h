@@ -6,9 +6,9 @@
 
 @interface AVVideo : NSObject <AVCaptureVideoDataOutputSampleBufferDelegate>
 
-@property (nonatomic, assign) AVCaptureSession *session;
-@property (nonatomic, assign) AVCaptureConnection *videoConnection;
-@property (nonatomic, assign) CGContextRef currentFrame;
+@property(nonatomic, assign) AVCaptureSession *session;
+@property(nonatomic, assign) AVCaptureConnection *videoConnection;
+@property(nonatomic, assign) CGContextRef currentFrame;
 
 - (BOOL)setupVideo:(int)width height:(int)height;
 - (CGImageRef)getSnapshot:(CMTime)timeout showCursor:(bool)showCursor;

@@ -2,26 +2,25 @@
 #include "sunshine/platform/macos/av_audio.h"
 #include "sunshine/platform/macos/av_video.h"
 
-#include <fstream>
-#include <bitset>
 #include <algorithm>
- 
+#include <bitset>
+#include <fstream>
+
 #include <pwd.h>
 
-#include "sunshine/task_pool.h"
 #include "sunshine/config.h"
 #include "sunshine/main.h"
+#include "sunshine/task_pool.h"
 
-#import <ApplicationServices/ApplicationServices.h>
 #import <AVFoundation/AVFoundation.h>
+#import <ApplicationServices/ApplicationServices.h>
 
-#include <sstream>
 #include <iomanip>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
-namespace platf
-{
+namespace platf {
 using namespace std::literals;
 
 struct avmic_attr_t : public mic_t {
@@ -34,36 +33,36 @@ struct avmic_attr_t : public mic_t {
   capture_e sample(std::vector<std::int16_t> &sample_in) override {
     auto sample_size = sample_in.size();
 
-    uint32_t length = 0;
+    uint32_t length        = 0;
     void *byteSampleBuffer = TPCircularBufferTail(&mic->audioSampleBuffer, &length);
-    
-    while (length < sample_size * sizeof(std::int16_t)) {
+
+    while(length < sample_size * sizeof(std::int16_t)) {
       [mic.samplesArrivedSignal wait];
       byteSampleBuffer = TPCircularBufferTail(&mic->audioSampleBuffer, &length);
     }
-    
+
     const int16_t *sampleBuffer = (int16_t *)byteSampleBuffer;
     std::vector<int16_t> vectorBuffer(sampleBuffer, sampleBuffer + sample_size);
 
     std::copy_n(std::begin(vectorBuffer), sample_size, std::begin(sample_in));
 
     TPCircularBufferConsume(&mic->audioSampleBuffer, sample_size * sizeof(std::int16_t));
-    
+
     return capture_e::ok;
   }
 };
 
 struct macos_audio_control_t : public audio_control_t {
 public:
-  int set_sink(const std::string &sink) override{
+  int set_sink(const std::string &sink) override {
     BOOST_LOG(warning) << "audio_control_t::set_sink() unimplemented: "sv << sink;
     return 0;
   }
 
-  std::unique_ptr<mic_t> microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size) override{
+  std::unique_ptr<mic_t> microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size) override {
     BOOST_LOG(info) << "Available inputs:"sv;
 
-    for (NSString *name in [AVAudio microphoneNames]) {
+    for(NSString *name in [AVAudio microphoneNames]) {
       BOOST_LOG(info) << "\t"sv << [name UTF8String];
     }
 
@@ -71,17 +70,17 @@ public:
 
     const char *audio_sink = "";
 
-    if (!config::audio.sink.empty()) {
+    if(!config::audio.sink.empty()) {
       audio_sink = config::audio.sink.c_str();
     }
 
-    mic->mic = [[AVAudio alloc]init];
+    mic->mic = [[AVAudio alloc] init];
 
-    if ([mic->mic setupMicrophoneWithName:[NSString stringWithUTF8String:audio_sink] sampleRate:sample_rate frameSize:frame_size channels:channels]) {
+    if([mic->mic setupMicrophoneWithName:[NSString stringWithUTF8String:audio_sink] sampleRate:sample_rate frameSize:frame_size channels:channels]) {
       BOOST_LOG(error) << "opening microphone '"sv << audio_sink << "' failed. Please set a valid input source in the Sunshine config."sv;
       BOOST_LOG(error) << "Available inputs:"sv;
 
-      for (NSString *name in [AVAudio microphoneNames]) {
+      for(NSString *name in [AVAudio microphoneNames]) {
         BOOST_LOG(error) << "\t"sv << [name UTF8String];
       }
 
@@ -102,7 +101,7 @@ struct avdisplay_img_t : public img_t {
   CFDataRef img;
 
   ~avdisplay_img_t() override {
-    if (img != NULL)
+    if(img != NULL)
       CFRelease(img);
     data = nullptr;
   }
@@ -124,16 +123,16 @@ struct avdisplay_attr_t : public display_t {
 
     CFDataRef dataRef = CGDataProviderCopyData(dataProvider);
 
-    if (img_out->img != NULL) {
+    if(img_out->img != NULL) {
       CFRelease(img_out->img);
     }
 
-    img_out->img = dataRef;
+    img_out->img  = dataRef;
     img_out->data = (uint8_t *)CFDataGetBytePtr(dataRef);
 
-    img_out->width = CGImageGetWidth(img);
-    img_out->height = CGImageGetHeight(img);
-    img_out->row_pitch = CGImageGetBytesPerRow(img);
+    img_out->width       = CGImageGetWidth(img);
+    img_out->height      = CGImageGetHeight(img);
+    img_out->row_pitch   = CGImageGetBytesPerRow(img);
     img_out->pixel_pitch = CGImageGetBitsPerPixel(img) / 8;
 
     CGImageRelease(img);
@@ -152,7 +151,7 @@ struct avdisplay_attr_t : public display_t {
 };
 
 std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type) {
-  if (hwdevice_type != platf::mem_type_e::system && hwdevice_type != platf::mem_type_e::videotoolbox) {
+  if(hwdevice_type != platf::mem_type_e::system && hwdevice_type != platf::mem_type_e::videotoolbox) {
     BOOST_LOG(error) << "Could not initialize display with the given hw device type."sv;
     return nullptr;
   }
@@ -161,24 +160,24 @@ std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type) {
 
   result->display = [[AVVideo alloc] init];
 
-  int capture_width = 0;
+  int capture_width  = 0;
   int capture_height = 0;
 
-  if (config::video.sw.width.has_value() && config::video.sw.height.has_value()) {
-    capture_width = config::video.sw.width.value();
+  if(config::video.sw.width.has_value() && config::video.sw.height.has_value()) {
+    capture_width  = config::video.sw.width.value();
     capture_height = config::video.sw.height.value();
     BOOST_LOG(info) << "Capturing with "sv << capture_width << "x"sv << capture_height;
   }
-  
-  if (![result->display setupVideo:capture_width
-                            height:capture_height]) {
+
+  if(![result->display setupVideo:capture_width
+                           height:capture_height]) {
     BOOST_LOG(error) << "Video setup failed."sv;
     return nullptr;
   }
 
   auto tmp_image = result->alloc_img();
   result->dummy_img(tmp_image.get());
-  result->width = tmp_image->width;
+  result->width  = tmp_image->width;
   result->height = tmp_image->height;
 
   return result;

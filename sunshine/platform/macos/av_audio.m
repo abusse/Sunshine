@@ -5,13 +5,13 @@
 
 + (NSArray<NSString *> *)microphoneNames {
   AVCaptureDeviceDiscoverySession *discoverySession = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInMicrophone,
-                                                                                                                         AVCaptureDeviceTypeExternalUnknown]
+    AVCaptureDeviceTypeExternalUnknown]
                                                                                                              mediaType:AVMediaTypeAudio
                                                                                                               position:AVCaptureDevicePositionUnspecified];
 
-  NSMutableArray *result = [[NSMutableArray alloc]init];
+  NSMutableArray *result = [[NSMutableArray alloc] init];
 
-  for (AVCaptureDevice *device in discoverySession.devices) {
+  for(AVCaptureDevice *device in discoverySession.devices) {
     [result addObject:[device localizedName]];
   }
 
@@ -29,19 +29,19 @@
 
 - (int)setupMicrophoneWithName:(NSString *)name sampleRate:(UInt32)sampleRate frameSize:(UInt32)frameSize channels:(UInt8)channels {
   AVCaptureDeviceDiscoverySession *discoverySession = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInMicrophone,
-                                                                                                                         AVCaptureDeviceTypeExternalUnknown]
+    AVCaptureDeviceTypeExternalUnknown]
                                                                                                              mediaType:AVMediaTypeAudio
                                                                                                               position:AVCaptureDevicePositionUnspecified];
 
   AVCaptureDevice *inputDevice = nil;
 
-  for (AVCaptureDevice *device in discoverySession.devices) {
-    if ([[device localizedName] isEqualToString:name]) {
+  for(AVCaptureDevice *device in discoverySession.devices) {
+    if([[device localizedName] isEqualToString:name]) {
       inputDevice = device;
     }
   }
 
-  if (!inputDevice) {
+  if(!inputDevice) {
     return -1;
   }
 
@@ -49,13 +49,14 @@
 
   NSError *error;
   AVCaptureDeviceInput *audioInput = [AVCaptureDeviceInput deviceInputWithDevice:inputDevice error:&error];
-  if (audioInput == nil) {
+  if(audioInput == nil) {
     return -1;
   }
 
-  if ([self.audioCaptureSession canAddInput:audioInput]) {
+  if([self.audioCaptureSession canAddInput:audioInput]) {
     [self.audioCaptureSession addInput:audioInput];
-  } else {
+  }
+  else {
     [audioInput dealloc];
     return -1;
   }
@@ -64,22 +65,23 @@
 
 
   [audioOutput setAudioSettings:@{
-     (NSString *)AVFormatIDKey: [NSNumber numberWithUnsignedInt:kAudioFormatLinearPCM],
-     (NSString *)AVSampleRateKey: [NSNumber numberWithUnsignedInt:sampleRate],
-     (NSString *)AVNumberOfChannelsKey: [NSNumber numberWithUnsignedInt:channels],
-     (NSString *)AVLinearPCMBitDepthKey: [NSNumber numberWithUnsignedInt:16],
-     (NSString *)AVLinearPCMIsFloatKey: @NO,
-     (NSString *)AVLinearPCMIsNonInterleaved: @NO
-   }];
+    (NSString *)AVFormatIDKey: [NSNumber numberWithUnsignedInt:kAudioFormatLinearPCM],
+    (NSString *)AVSampleRateKey: [NSNumber numberWithUnsignedInt:sampleRate],
+    (NSString *)AVNumberOfChannelsKey: [NSNumber numberWithUnsignedInt:channels],
+    (NSString *)AVLinearPCMBitDepthKey: [NSNumber numberWithUnsignedInt:16],
+    (NSString *)AVLinearPCMIsFloatKey: @NO,
+    (NSString *)AVLinearPCMIsNonInterleaved: @NO
+  }];
 
-  dispatch_queue_attr_t qos = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_CONCURRENT, QOS_CLASS_USER_INITIATED, DISPATCH_QUEUE_PRIORITY_HIGH);
+  dispatch_queue_attr_t qos       = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_CONCURRENT, QOS_CLASS_USER_INITIATED, DISPATCH_QUEUE_PRIORITY_HIGH);
   dispatch_queue_t recordingQueue = dispatch_queue_create("audioSamplingQueue", qos);
-  
+
   [audioOutput setSampleBufferDelegate:self queue:recordingQueue];
 
-  if ([self.audioCaptureSession canAddOutput:audioOutput]) {
+  if([self.audioCaptureSession canAddOutput:audioOutput]) {
     [self.audioCaptureSession addOutput:audioOutput];
-  } else {
+  }
+  else {
     [audioInput release];
     [audioOutput release];
     return -1;
@@ -92,22 +94,22 @@
   [audioInput release];
   [audioOutput release];
 
-  self.sourceName = name;
+  self.sourceName           = name;
   self.samplesArrivedSignal = [[NSCondition alloc] init];
   TPCircularBufferInit(&self->audioSampleBuffer, kBufferLength);
-    
+
   return 0;
 }
 
-- (void)  captureOutput:(AVCaptureOutput *)output
+- (void)captureOutput:(AVCaptureOutput *)output
   didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
          fromConnection:(AVCaptureConnection *)connection {
-  if (connection == self.audioConnection) {
+  if(connection == self.audioConnection) {
     AudioBufferList audioBufferList;
     CMBlockBufferRef blockBuffer;
 
     CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(sampleBuffer, NULL, &audioBufferList, sizeof(audioBufferList), NULL, NULL, 0, &blockBuffer);
-    
+
     //NSAssert(audioBufferList.mNumberBuffers == 1, @"Expected interlveaved PCM format but buffer contained %u streams", audioBufferList.mNumberBuffers);
 
     // this is safe, because an interleaved PCM stream has exactly one buffer
