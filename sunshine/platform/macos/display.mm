@@ -152,7 +152,7 @@ struct avdisplay_attr_t : public display_t {
 };
 
 std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type) {
-  if (hwdevice_type != platf::mem_type_e::system) {
+  if (hwdevice_type != platf::mem_type_e::system && hwdevice_type != platf::mem_type_e::videotoolbox) {
     BOOST_LOG(error) << "Could not initialize display with the given hw device type."sv;
     return nullptr;
   }

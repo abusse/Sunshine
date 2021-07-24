@@ -592,6 +592,13 @@ void apply_config(std::unordered_map<std::string, std::string> &&vars) {
   int_f(vars, "amd_quality", video.amd.quality, amd::quality_from_view);
   int_f(vars, "amd_rc", video.amd.rc, amd::rc_from_view);
   int_f(vars, "amd_coder", video.amd.coder, amd::coder_from_view);
+  
+  bool vt_allow_sw = false;
+  bool_f(vars, "vt_allow_sw", vt_allow_sw);
+  bool vt_require_sw = false;
+  bool_f(vars, "vt_require_sw", vt_require_sw);
+  bool vt_realtime = true;
+  bool_f(vars, "vt_realtime", vt_realtime);
 
   string_f(vars, "encoder", video.encoder);
   string_f(vars, "adapter_name", video.adapter_name);

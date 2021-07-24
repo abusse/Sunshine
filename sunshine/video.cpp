@@ -72,6 +72,7 @@ platf::pix_fmt_e map_pix_fmt(AVPixelFormat fmt);
 util::Either<buffer_t, int> dxgi_make_hwdevice_ctx(platf::hwdevice_t *hwdevice_ctx);
 util::Either<buffer_t, int> vaapi_make_hwdevice_ctx(platf::hwdevice_t *hwdevice_ctx);
 util::Either<buffer_t, int> cuda_make_hwdevice_ctx(platf::hwdevice_t *hwdevice_ctx);
+util::Either<buffer_t, int> videotoolbox_make_hwdevice_ctx(platf::hwdevice_t *hwdevice_ctx);
 
 int hwframe_ctx(ctx_t &ctx, buffer_t &hwdevice, AVPixelFormat format);
 
@@ -549,13 +550,50 @@ static encoder_t vaapi {
 };
 #endif
 
+#ifdef __APPLE__
+static encoder_t videotoolbox {
+  "videotoolbox"sv,
+  { FF_PROFILE_H264_HIGH, FF_PROFILE_HEVC_MAIN, FF_PROFILE_HEVC_MAIN_10 },
+  AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
+  AV_PIX_FMT_VIDEOTOOLBOX,
+  AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV420P,
+  {
+    {
+      { "allow_sw"s, config::video.vt.allow_sw ? "true" : "false" },
+      { "require_sw"s, config::video.vt.require_sw ? "true" : "false" },
+      { "realtime"s, config::video.vt.realtime ? "true" : "false" },
+    },
+    std::nullopt,
+    std::nullopt,
+    "hevc_videotoolbox"s,
+  },
+  {
+    {
+      { "allow_sw"s, config::video.vt.allow_sw ? "true" : "false" },
+      { "require_sw"s, config::video.vt.require_sw ? "true" : "false" },
+      { "realtime"s, config::video.vt.realtime ? "true" : "false" },
+    },
+    std::nullopt,
+    std::nullopt,
+    "h264_videotoolbox"s,
+  },
+  SYSTEM_MEMORY,
+  videotoolbox_make_hwdevice_ctx
+};
+#endif
+
 static std::vector<encoder_t> encoders {
+#ifndef __APPLE__
   nvenc,
+#endif
 #ifdef _WIN32
   amdvce,
 #endif
 #ifdef __linux__
   vaapi,
+#endif
+#ifdef __APPLE__
+  videotoolbox,
 #endif
   software
 };
@@ -771,7 +809,7 @@ int encode(int64_t frame_nr, session_t &session, frame_t::pointer frame, safe::m
 }
 
 std::optional<session_t> make_session(const encoder_t &encoder, const config_t &config, int width, int height, platf::hwdevice_t *hwdevice) {
-  bool hardware = encoder.dev_type != AV_HWDEVICE_TYPE_NONE;
+  bool hardware = (encoder.dev_type != AV_HWDEVICE_TYPE_NONE) && (encoder.dev_type != AV_HWDEVICE_TYPE_VIDEOTOOLBOX);
 
   auto &video_format = config.videoFormat == 0 ? encoder.h264 : encoder.hevc;
   if(!video_format[encoder_t::PASSED]) {
@@ -1680,6 +1718,20 @@ util::Either<buffer_t, int> cuda_make_hwdevice_ctx(platf::hwdevice_t *base) {
   return hw_device_buf;
 }
 
+util::Either<buffer_t, int> videotoolbox_make_hwdevice_ctx(platf::hwdevice_t *base) {
+  buffer_t hw_device_buf;
+
+  auto status = av_hwdevice_ctx_create(&hw_device_buf, AV_HWDEVICE_TYPE_VIDEOTOOLBOX, nullptr, nullptr, 0);
+  if(status < 0) {
+    char string[AV_ERROR_MAX_STRING_SIZE];
+    BOOST_LOG(error) << "Failed to create a VideoToolbox device: "sv << av_make_error_string(string, AV_ERROR_MAX_STRING_SIZE, status);
+    return -1;
+  }
+
+  return hw_device_buf;
+}
+
+
 #ifdef _WIN32
 }
 
@@ -1749,6 +1801,8 @@ platf::mem_type_e map_dev_type(AVHWDeviceType type) {
     return platf::mem_type_e::vaapi;
   case AV_HWDEVICE_TYPE_CUDA:
     return platf::mem_type_e::cuda;
+  case AV_HWDEVICE_TYPE_VIDEOTOOLBOX:
+      return platf::mem_type_e::videotoolbox;
   case AV_HWDEVICE_TYPE_NONE:
     return platf::mem_type_e::system;
   default:
