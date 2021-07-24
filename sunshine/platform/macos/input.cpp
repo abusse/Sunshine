@@ -15,6 +15,7 @@ using namespace std::literals;
 struct input_raw_t {
 public:
   CGEventFlags kb_flags;
+  CGDirectDisplayID display;
 };
 
 // A struct to hold a Windows keycode to Mac virtual keycode mapping.
@@ -152,8 +153,8 @@ const KeyCodeMap kKeyCodesMap[] = {
   { 0xA1 /* VKEY_RSHIFT */,                    kVK_Shift               },
   { 0xA2 /* VKEY_LCONTROL */,                  kVK_Control             },
   { 0xA3 /* VKEY_RCONTROL */,                  kVK_Control             },
-  { 0xA4 /* VKEY_LMENU */,                     -1                      },
-  { 0xA5 /* VKEY_RMENU */,                     -1                      },
+  { 0xA4 /* VKEY_LMENU */,                     kVK_Command             },
+  { 0xA5 /* VKEY_RMENU */,                     kVK_Option              },
   { 0xA6 /* VKEY_BROWSER_BACK */,              -1                      },
   { 0xA7 /* VKEY_BROWSER_FORWARD */,           -1                      },
   { 0xA8 /* VKEY_BROWSER_REFRESH */,           -1                      },
@@ -239,8 +240,8 @@ void keyboard(input_t &input, uint16_t modcode, bool release) {
   }
 
 
-  CGEventSourceRef source    = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);
-  CGEventRef saveCommandDown = CGEventCreateKeyboardEvent(source, keysym(modcode), !release);
+  CGEventSourceRef source    = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+  CGEventRef saveCommandDown = CGEventCreateKeyboardEvent(source, key, !release);
   CGEventSetFlags(saveCommandDown, keyboard->kb_flags);
 
   CGEventPost(kCGAnnotatedSessionEventTap, saveCommandDown);
@@ -272,12 +273,29 @@ CGPoint get_mouse_loc() {
   return cursor;
 }
 
-void mouse_event(CGMouseButton button, CGEventType type, CGPoint location) {
+void mouse_event(input_t &input, CGMouseButton button, CGEventType type, CGPoint location) {
+  BOOST_LOG(debug) << "mouse_event: "sv << button << ", type: "sv << type << ", location:"sv << location.x << ":"sv << location.y;
+
+  auto display = ((input_raw_t *)input.get())->display;
+
+  if(location.x < 0)
+    location.x = 0;
+  if(location.x >= CGDisplayPixelsWide(display))
+    location.x = CGDisplayPixelsWide(display) - 1;
+
+  if(location.y < 0)
+    location.y = 0;
+  if(location.y >= CGDisplayPixelsHigh(display))
+    location.y = CGDisplayPixelsHigh(display) - 1;
+
   CGEventRef event = CGEventCreateMouseEvent(NULL, type, location, button);
 
   CGEventSetType(event, type);
   CGEventPost(kCGHIDEventTap, event);
   CFRelease(event);
+  // For why this is here, see:
+  // https://stackoverflow.com/questions/15194409/simulated-mouseevent-not-working-properly-osx
+  CGWarpMouseCursorPosition(location);
 }
 
 void move_mouse(input_t &input, int deltaX, int deltaY) {
@@ -285,32 +303,36 @@ void move_mouse(input_t &input, int deltaX, int deltaY) {
 
   CGPoint location = CGPointMake(current.x + deltaX, current.y + deltaY);
 
-  mouse_event(kCGMouseButtonLeft, kCGEventMouseMoved, location);
+  mouse_event(input, kCGMouseButtonLeft, kCGEventMouseMoved, location);
 }
 
 void abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y) {
   CGPoint location = CGPointMake(x, y);
-  mouse_event(kCGMouseButtonLeft, kCGEventMouseMoved, location);
+  mouse_event(input, kCGMouseButtonLeft, kCGEventMouseMoved, location);
 }
 
 void button_mouse(input_t &input, int button, bool release) {
   CGMouseButton macButton;
+  CGEventType eventType;
   switch(button) {
   case 1:
     macButton = kCGMouseButtonLeft;
+    eventType = release ? kCGEventLeftMouseUp : kCGEventLeftMouseDown;
     break;
   case 2:
     macButton = kCGMouseButtonCenter;
+    eventType = release ? kCGEventOtherMouseUp : kCGEventOtherMouseDown;
     break;
   case 3:
     macButton = kCGMouseButtonRight;
+    eventType = release ? kCGEventRightMouseUp : kCGEventRightMouseDown;
     break;
   default:
     BOOST_LOG(warning) << "Unsupported mouse button for MacOS: "sv << button;
     return;
   }
 
-  mouse_event(macButton, release ? kCGEventOtherMouseUp : kCGEventOtherMouseDown, get_mouse_loc());
+  mouse_event(input, macButton, eventType, get_mouse_loc());
 }
 
 void scroll(input_t &input, int high_res_distance) {
@@ -328,6 +350,10 @@ input_t input() {
   auto gp = (input_raw_t *)result.get();
 
   gp->kb_flags = 0;
+  // If we don't use the main display in the future, this has to be adapted
+  gp->display = CGMainDisplayID();
+
+  BOOST_LOG(debug) << "Display "sv << gp->display << ", pixel dimention: " << CGDisplayPixelsWide(gp->display) << "x"sv << CGDisplayPixelsHigh(gp->display);
 
   return result;
 }
