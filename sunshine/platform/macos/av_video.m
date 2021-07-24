@@ -11,11 +11,12 @@
   [super dealloc];
 }
 
-- (BOOL)setupVideo:(int)width height:(int)height {
+- (BOOL)setupVideo:(int)width height:(int)height frameRate:(int)frameRate {
   self.currentFrame = nil;
   self.session      = [[AVCaptureSession alloc] init];
 
   AVCaptureScreenInput *screenInput = [[AVCaptureScreenInput alloc] initWithDisplayID:CGMainDisplayID()];
+  [screenInput setMinFrameDuration:CMTimeMake(1, frameRate)];
 
   if([self.session canAddInput:screenInput]) {
     [self.session addInput:screenInput];
@@ -39,7 +40,6 @@
       (NSString *)kCVPixelBufferPixelFormatTypeKey: [NSNumber numberWithUnsignedInt:kCVPixelFormatType_32BGRA]
     }];
   }
-
 
   dispatch_queue_attr_t qos       = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, DISPATCH_QUEUE_PRIORITY_HIGH);
   dispatch_queue_t recordingQueue = dispatch_queue_create("videoCaptureQueue", qos);

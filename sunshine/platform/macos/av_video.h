@@ -10,7 +10,7 @@
 @property(nonatomic, assign) AVCaptureConnection *videoConnection;
 @property(nonatomic, assign) CGContextRef currentFrame;
 
-- (BOOL)setupVideo:(int)width height:(int)height;
+- (BOOL)setupVideo:(int)width height:(int)height frameRate:(int)frameRate;
 - (CGImageRef)getSnapshot:(CMTime)timeout showCursor:(bool)showCursor;
 
 @end

@@ -170,7 +170,8 @@ std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type) {
   }
 
   if(![result->display setupVideo:capture_width
-                           height:capture_height]) {
+                           height:capture_height
+                        frameRate:60]) {
     BOOST_LOG(error) << "Video setup failed."sv;
     return nullptr;
   }
