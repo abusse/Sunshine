@@ -13,14 +13,14 @@
   TPCircularBuffer audioSampleBuffer;
 }
 
-@property(nonatomic, assign) NSString *sourceName;
 @property(nonatomic, assign) AVCaptureSession *audioCaptureSession;
 @property(nonatomic, assign) AVCaptureConnection *audioConnection;
 @property(nonatomic, assign) NSCondition *samplesArrivedSignal;
 
 + (NSArray *)microphoneNames;
++ (AVCaptureDevice *)findMicrophone:(NSString *)name;
 
-- (int)setupMicrophoneWithName:(NSString *)name sampleRate:(UInt32)sampleRate frameSize:(UInt32)frameSize channels:(UInt8)channels;
+- (int)setupMicrophone:(AVCaptureDevice *)device sampleRate:(UInt32)sampleRate frameSize:(UInt32)frameSize channels:(UInt8)channels;
 
 @end
 

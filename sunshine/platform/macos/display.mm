@@ -53,37 +53,31 @@ struct avmic_attr_t : public mic_t {
 };
 
 struct macos_audio_control_t : public audio_control_t {
+  AVCaptureDevice *device;
+
 public:
   int set_sink(const std::string &sink) override {
-    BOOST_LOG(warning) << "audio_control_t::set_sink() unimplemented: "sv << sink;
-    return 0;
+    device = [AVAudio findMicrophone:[NSString stringWithUTF8String:sink.c_str()]];
+
+    if(device)
+      return 0;
+    else {
+      BOOST_LOG(warning) << "seting microphone to '"sv << sink << "' failed. Please set a valid input source in the Sunshine config."sv;
+      BOOST_LOG(warning) << "Available inputs:"sv;
+
+      for(NSString *name in [AVAudio microphoneNames]) {
+        BOOST_LOG(warning) << "\t"sv << [name UTF8String];
+      }
+
+      return -1;
+    }
   }
 
   std::unique_ptr<mic_t> microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size) override {
-    BOOST_LOG(info) << "Available inputs:"sv;
-
-    for(NSString *name in [AVAudio microphoneNames]) {
-      BOOST_LOG(info) << "\t"sv << [name UTF8String];
-    }
-
     auto mic = std::make_unique<avmic_attr_t>();
-
-    const char *audio_sink = "";
-
-    if(!config::audio.sink.empty()) {
-      audio_sink = config::audio.sink.c_str();
-    }
-
     mic->mic = [[AVAudio alloc] init];
 
-    if([mic->mic setupMicrophoneWithName:[NSString stringWithUTF8String:audio_sink] sampleRate:sample_rate frameSize:frame_size channels:channels]) {
-      BOOST_LOG(error) << "opening microphone '"sv << audio_sink << "' failed. Please set a valid input source in the Sunshine config."sv;
-      BOOST_LOG(error) << "Available inputs:"sv;
-
-      for(NSString *name in [AVAudio microphoneNames]) {
-        BOOST_LOG(error) << "\t"sv << [name UTF8String];
-      }
-
+    if([mic->mic setupMicrophone:device sampleRate:sample_rate frameSize:frame_size channels:channels]) {
       return nullptr;
     }
 

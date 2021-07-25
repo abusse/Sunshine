@@ -2,53 +2,49 @@
 
 @implementation AVAudio
 
-
-+ (NSArray<NSString *> *)microphoneNames {
++ (NSArray<AVCaptureDevice *> *)microphones {
   AVCaptureDeviceDiscoverySession *discoverySession = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInMicrophone,
     AVCaptureDeviceTypeExternalUnknown]
                                                                                                              mediaType:AVMediaTypeAudio
                                                                                                               position:AVCaptureDevicePositionUnspecified];
+  return discoverySession.devices;
+}
 
++ (NSArray<NSString *> *)microphoneNames {
   NSMutableArray *result = [[NSMutableArray alloc] init];
 
-  for(AVCaptureDevice *device in discoverySession.devices) {
+  for(AVCaptureDevice *device in [AVAudio microphones]) {
     [result addObject:[device localizedName]];
   }
 
   return result;
 }
 
++ (AVCaptureDevice *)findMicrophone:(NSString *)name {
+  for(AVCaptureDevice *device in [AVAudio microphones]) {
+    if([[device localizedName] isEqualToString:name]) {
+      return device;
+    }
+  }
+
+  return nil;
+}
+
 - (void)dealloc {
   // make sure we don't process any further samples
   self.audioConnection = nil;
-  [self.audioCaptureSession release];
+  // make sure nothing gets stuck on this signal
+  [self.samplesArrivedSignal signal];
   [self.samplesArrivedSignal release];
   TPCircularBufferCleanup(&audioSampleBuffer);
   [super dealloc];
 }
 
-- (int)setupMicrophoneWithName:(NSString *)name sampleRate:(UInt32)sampleRate frameSize:(UInt32)frameSize channels:(UInt8)channels {
-  AVCaptureDeviceDiscoverySession *discoverySession = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInMicrophone,
-    AVCaptureDeviceTypeExternalUnknown]
-                                                                                                             mediaType:AVMediaTypeAudio
-                                                                                                              position:AVCaptureDevicePositionUnspecified];
-
-  AVCaptureDevice *inputDevice = nil;
-
-  for(AVCaptureDevice *device in discoverySession.devices) {
-    if([[device localizedName] isEqualToString:name]) {
-      inputDevice = device;
-    }
-  }
-
-  if(!inputDevice) {
-    return -1;
-  }
-
+- (int)setupMicrophone:(AVCaptureDevice *)device sampleRate:(UInt32)sampleRate frameSize:(UInt32)frameSize channels:(UInt8)channels {
   self.audioCaptureSession = [[AVCaptureSession alloc] init];
 
   NSError *error;
-  AVCaptureDeviceInput *audioInput = [AVCaptureDeviceInput deviceInputWithDevice:inputDevice error:&error];
+  AVCaptureDeviceInput *audioInput = [AVCaptureDeviceInput deviceInputWithDevice:device error:&error];
   if(audioInput == nil) {
     return -1;
   }
@@ -94,7 +90,6 @@
   [audioInput release];
   [audioOutput release];
 
-  self.sourceName           = name;
   self.samplesArrivedSignal = [[NSCondition alloc] init];
   TPCircularBufferInit(&self->audioSampleBuffer, kBufferLength);
 
