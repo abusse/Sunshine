@@ -91,7 +91,7 @@
   [audioOutput release];
 
   self.samplesArrivedSignal = [[NSCondition alloc] init];
-  TPCircularBufferInit(&self->audioSampleBuffer, kBufferLength);
+  TPCircularBufferInit(&self->audioSampleBuffer, kBufferLength * channels);
 
   return 0;
 }

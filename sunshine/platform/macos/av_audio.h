@@ -6,7 +6,7 @@
 
 #include "sunshine/platform/macos/TPCircularBuffer/TPCircularBuffer.h"
 
-#define kBufferLength 4096
+#define kBufferLength 2048
 
 @interface AVAudio : NSObject <AVCaptureAudioDataOutputSampleBufferDelegate> {
 @public
