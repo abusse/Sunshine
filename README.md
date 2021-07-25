@@ -85,6 +85,10 @@ sudo port install cmake boost libopus ffmpeg
 - `assets/apps.json` is an [example](README.md#application-list) of a list of applications that are started just before running a stream
 - Sunshine can only access microphones on macOS due to system limitations. To stream system audio use [Soundflower](https://github.com/mattingalls/Soundflower) or [BlackHole](https://github.com/ExistentialAudio/BlackHole) and select their sink as audio device in `sunshine.conf`
 
+### Usage & Limitations:
+- left ALT-Key is mapped to CMD-Key, right ALT-Key is mapped to Option-Key
+- Gamepads are not supported
+
 ## Windows 10
 
 ### Requirements:
