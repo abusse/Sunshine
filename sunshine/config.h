@@ -11,8 +11,7 @@
 namespace config {
 struct video_t {
   // ffmpeg params
-  int crf; // higher == more compression and less quality
-  int qp;  // higher == more compression and less quality, ignored if crf != 0
+  int qp;  // higher == more compression and less quality
 
   int hevc_mode;
 
@@ -85,6 +84,8 @@ struct input_t {
   std::chrono::milliseconds back_button_timeout;
   std::chrono::milliseconds key_repeat_delay;
   std::chrono::duration<double> key_repeat_period;
+
+  std::string gamepad;
 };
 
 namespace flag {

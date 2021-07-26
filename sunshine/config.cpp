@@ -147,7 +147,6 @@ int coder_from_view(const std::string_view &coder) {
 } // namespace amd
 
 video_t video {
-  0,  // crf
   28, // qp
 
   0, // hevc_mode
@@ -211,9 +210,14 @@ nvhttp_t nvhttp {
 };
 
 input_t input {
-  2s,                                        // back_button_timeout
-  500ms,                                     // key_repeat_delay
-  std::chrono::duration<double> { 1 / 24.9 } // key_repeat_period
+  2s,                                         // back_button_timeout
+  500ms,                                      // key_repeat_delay
+  std::chrono::duration<double> { 1 / 24.9 }, // key_repeat_period
+
+  {
+    platf::supported_gamepads().front().data(),
+    platf::supported_gamepads().front().size(),
+  }, // Default gamepad
 };
 
 sunshine_t sunshine {
@@ -577,7 +581,6 @@ void apply_config(std::unordered_map<std::string, std::string> &&vars) {
     std::cout << "["sv << name << "] -- ["sv << val << ']' << std::endl;
   }
 
-  int_f(vars, "crf", video.crf);
   int_f(vars, "qp", video.qp);
   int_f(vars, "min_threads", video.min_threads);
   int_between_f(vars, "hevc_mode", video.hevc_mode, { 0, 3 });
@@ -654,6 +657,8 @@ void apply_config(std::unordered_map<std::string, std::string> &&vars) {
   if(to >= 0) {
     input.key_repeat_delay = std::chrono::milliseconds { to };
   }
+
+  string_restricted_f(vars, "gamepad"s, input.gamepad, platf::supported_gamepads());
 
   int port = sunshine.port;
   int_f(vars, "port"s, port);

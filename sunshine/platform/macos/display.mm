@@ -108,7 +108,8 @@ struct avdisplay_attr_t : public display_t {
     [display release];
   }
 
-  capture_e snapshot(img_t *img_out_base, std::chrono::milliseconds timeout, bool cursor) override {
+  //XXX: Replace
+  capture_e snapshot(img_t *img_out_base, std::chrono::milliseconds timeout, bool cursor) {
     auto img_out = (avdisplay_img_t *)img_out_base;
 
     auto img = [display getSnapshot:CMTimeMake(timeout.count(), 1000) showCursor:cursor];

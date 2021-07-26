@@ -251,6 +251,7 @@ struct encoder_t {
     REF_FRAMES_RESTRICT,   // Set maximum reference frames
     REF_FRAMES_AUTOSELECT, // Allow encoder to select maximum reference frames (If !REF_FRAMES_RESTRICT --> REF_FRAMES_AUTOSELECT)
     SLICE,                 // Allow frame to be partitioned into multiple slices
+    CBR,                   // Some encoders don't support CBR, if not supported --> attempt constant quantatication parameter instead
     DYNAMIC_RANGE,         // hdr
     VUI_PARAMETERS,        // AMD encoder with VAAPI doesn't add VUI parameters to SPS
     NALU_PREFIX_5b,        // libx264/libx265 have a 3-byte nalu prefix instead of 4-byte nalu prefix
@@ -266,6 +267,7 @@ struct encoder_t {
       _CONVERT(REF_FRAMES_RESTRICT);
       _CONVERT(REF_FRAMES_AUTOSELECT);
       _CONVERT(SLICE);
+      _CONVERT(CBR);
       _CONVERT(DYNAMIC_RANGE);
       _CONVERT(VUI_PARAMETERS);
       _CONVERT(NALU_PREFIX_5b);
@@ -277,7 +279,7 @@ struct encoder_t {
   }
 
   struct option_t {
-    KITTY_DEFAULT_CONSTR(option_t)
+    KITTY_DEFAULT_CONSTR_MOVE(option_t)
     option_t(const option_t &) = default;
 
     std::string name;
@@ -300,7 +302,7 @@ struct encoder_t {
 
   struct {
     std::vector<option_t> options;
-    std::optional<option_t> crf, qp;
+    std::optional<option_t> qp;
 
     std::string name;
     std::bitset<MAX_FLAGS> capabilities;
@@ -366,9 +368,6 @@ struct sync_session_ctx_t {
 struct sync_session_t {
   sync_session_ctx_t *ctx;
 
-  std::chrono::steady_clock::time_point next_frame;
-  std::chrono::nanoseconds delay;
-
   platf::img_t *img_tmp;
   std::shared_ptr<platf::hwdevice_t> hwdevice;
   session_t session;
@@ -379,7 +378,7 @@ using encode_e                   = platf::capture_e;
 
 struct capture_ctx_t {
   img_event_t images;
-  std::chrono::nanoseconds delay;
+  int framerate;
 };
 
 struct capture_thread_async_ctx_t {
@@ -425,7 +424,6 @@ static encoder_t nvenc {
       { "rc"s, &config::video.nv.rc },
     },
     std::nullopt,
-    std::nullopt,
     "hevc_nvenc"s,
   },
   {
@@ -436,7 +434,6 @@ static encoder_t nvenc {
       { "rc"s, &config::video.nv.rc },
       { "coder"s, &config::video.nv.coder },
     },
-    std::nullopt,
     std::make_optional<encoder_t::option_t>({ "qp"s, &config::video.qp }),
     "h264_nvenc"s,
   },
@@ -464,7 +461,6 @@ static encoder_t amdvce {
       { "quality"s, &config::video.amd.quality },
       { "rc"s, &config::video.amd.rc },
     },
-    std::nullopt,
     std::make_optional<encoder_t::option_t>({ "qp"s, &config::video.qp }),
     "hevc_amf"s,
   },
@@ -475,7 +471,6 @@ static encoder_t amdvce {
       { "rc"s, &config::video.amd.rc },
       { "log_to_dbg"s, "1"s },
     },
-    std::nullopt,
     std::make_optional<encoder_t::option_t>({ "qp"s, &config::video.qp }),
     "h264_amf"s,
   },
@@ -501,7 +496,6 @@ static encoder_t software {
       { "preset"s, &config::video.sw.preset },
       { "tune"s, &config::video.sw.tune },
     },
-    std::make_optional<encoder_t::option_t>("crf"s, &config::video.crf),
     std::make_optional<encoder_t::option_t>("qp"s, &config::video.qp),
     "libx265"s,
   },
@@ -510,7 +504,6 @@ static encoder_t software {
       { "preset"s, &config::video.sw.preset },
       { "tune"s, &config::video.sw.tune },
     },
-    std::make_optional<encoder_t::option_t>("crf"s, &config::video.crf),
     std::make_optional<encoder_t::option_t>("qp"s, &config::video.qp),
     "libx264"s,
   },
@@ -531,8 +524,7 @@ static encoder_t vaapi {
       { "sei"s, 0 },
       { "idr_interval"s, std::numeric_limits<int>::max() },
     },
-    std::nullopt,
-    std::nullopt,
+    std::make_optional<encoder_t::option_t>("qp"s, &config::video.qp),
     "hevc_vaapi"s,
   },
   {
@@ -540,8 +532,7 @@ static encoder_t vaapi {
       { "sei"s, 0 },
       { "idr_interval"s, std::numeric_limits<int>::max() },
     },
-    std::nullopt,
-    std::nullopt,
+    std::make_optional<encoder_t::option_t>("qp"s, &config::video.qp),
     "h264_vaapi"s,
   },
   LIMITED_GOP_SIZE | SYSTEM_MEMORY,
@@ -564,7 +555,6 @@ static encoder_t videotoolbox {
       { "realtime"s, config::video.vt.realtime ? "true" : "false" },
     },
     std::nullopt,
-    std::nullopt,
     "hevc_videotoolbox"s,
   },
   {
@@ -573,7 +563,6 @@ static encoder_t videotoolbox {
       { "require_sw"s, config::video.vt.require_sw ? "true" : "false" },
       { "realtime"s, config::video.vt.realtime ? "true" : "false" },
     },
-    std::nullopt,
     std::nullopt,
     "h264_videotoolbox"s,
   },
@@ -598,11 +587,11 @@ static std::vector<encoder_t> encoders {
   software
 };
 
-void reset_display(std::shared_ptr<platf::display_t> &disp, AVHWDeviceType type) {
+void reset_display(std::shared_ptr<platf::display_t> &disp, AVHWDeviceType type, int framerate) {
   // We try this twice, in case we still get an error on reinitialization
   for(int x = 0; x < 2; ++x) {
     disp.reset();
-    disp = platf::display(map_dev_type(type));
+    disp = platf::display(map_dev_type(type), framerate);
     if(disp) {
       break;
     }
@@ -630,9 +619,11 @@ void captureThread(
     }
   });
 
-  std::chrono::nanoseconds delay = 1s;
+  if(auto capture_ctx = capture_ctx_queue->pop()) {
+    capture_ctxs.emplace_back(std::move(*capture_ctx));
+  }
 
-  auto disp = platf::display(map_dev_type(encoder.dev_type));
+  auto disp = platf::display(map_dev_type(encoder.dev_type), capture_ctxs.front().framerate);
   if(!disp) {
     return;
   }
@@ -649,26 +640,35 @@ void captureThread(
     }
   }
 
-  if(auto capture_ctx = capture_ctx_queue->pop()) {
-    capture_ctxs.emplace_back(std::move(*capture_ctx));
-
-    delay = capture_ctxs.back().delay;
-  }
-
-  auto next_frame = std::chrono::steady_clock::now();
   while(capture_ctx_queue->running()) {
-    while(capture_ctx_queue->peek()) {
-      capture_ctxs.emplace_back(std::move(*capture_ctx_queue->pop()));
+    auto status = disp->capture([&](std::shared_ptr<platf::img_t> &img) -> std::shared_ptr<platf::img_t> {
+      while(capture_ctx_queue->peek()) {
+        capture_ctxs.emplace_back(std::move(*capture_ctx_queue->pop()));
+      }
 
-      delay = std::min(delay, capture_ctxs.back().delay);
-    }
+      KITTY_WHILE_LOOP(auto capture_ctx = std::begin(capture_ctxs), capture_ctx != std::end(capture_ctxs), {
+        if(!capture_ctx->images->running()) {
+          capture_ctx = capture_ctxs.erase(capture_ctx);
 
-    auto now = std::chrono::steady_clock::now();
+          continue;
+        }
 
-    auto &img = *round_robin++;
-    while(img.use_count() > 1) {}
+        capture_ctx->images->raise(img);
+        ++capture_ctx;
+      })
 
-    auto status = disp->snapshot(img.get(), 1000ms, display_cursor);
+      if(!capture_ctx_queue->running()) {
+        return nullptr;
+      }
+
+      auto &next_img = *round_robin++;
+      while(next_img.use_count() > 1) {}
+
+      return next_img;
+    },
+      *round_robin++, &display_cursor);
+
+
     switch(status) {
     case platf::capture_e::reinit: {
       reinit_event.raise(true);
@@ -687,7 +687,7 @@ void captureThread(
       }
 
       while(capture_ctx_queue->running()) {
-        reset_display(disp, encoder.dev_type);
+        reset_display(disp, encoder.dev_type, capture_ctxs.front().framerate);
 
         if(disp) {
           break;
@@ -712,38 +712,13 @@ void captureThread(
       continue;
     }
     case platf::capture_e::error:
-      return;
-    case platf::capture_e::timeout:
-      std::this_thread::sleep_for(1ms);
-      continue;
     case platf::capture_e::ok:
-      break;
+    case platf::capture_e::timeout:
+      return;
     default:
       BOOST_LOG(error) << "Unrecognized capture status ["sv << (int)status << ']';
       return;
     }
-
-    KITTY_WHILE_LOOP(auto capture_ctx = std::begin(capture_ctxs), capture_ctx != std::end(capture_ctxs), {
-      if(!capture_ctx->images->running()) {
-        auto tmp_delay = capture_ctx->delay;
-        capture_ctx    = capture_ctxs.erase(capture_ctx);
-
-        if(tmp_delay == delay) {
-          delay = std::min_element(std::begin(capture_ctxs), std::end(capture_ctxs), [](const auto &l, const auto &r) {
-            return l.delay < r.delay;
-          })->delay;
-        }
-        continue;
-      }
-
-      capture_ctx->images->raise(img);
-      ++capture_ctx;
-    })
-
-    if(next_frame > now) {
-      std::this_thread::sleep_until(next_frame);
-    }
-    next_frame += delay;
   }
 }
 
@@ -959,21 +934,18 @@ std::optional<session_t> make_session(const encoder_t &encoder, const config_t &
     handle_option(option);
   }
 
-  if(config.bitrate > 500) {
+  if(video_format[encoder_t::CBR]) {
     auto bitrate        = config.bitrate * 1000;
     ctx->rc_max_rate    = bitrate;
     ctx->rc_buffer_size = bitrate / config.framerate;
     ctx->bit_rate       = bitrate;
     ctx->rc_min_rate    = bitrate;
   }
-  else if(video_format.crf && config::video.crf != 0) {
-    handle_option(*video_format.crf);
-  }
   else if(video_format.qp) {
     handle_option(*video_format.qp);
   }
   else {
-    BOOST_LOG(error) << "Couldn't set video quality: encoder "sv << encoder.name << " doesn't support either crf or qp"sv;
+    BOOST_LOG(error) << "Couldn't set video quality: encoder "sv << encoder.name << " doesn't support qp"sv;
     return std::nullopt;
   }
 
@@ -1051,10 +1023,6 @@ void encode_run(
     return;
   }
 
-  auto delay = std::chrono::floor<std::chrono::nanoseconds>(1s) / config.framerate;
-
-  auto next_frame = std::chrono::steady_clock::now();
-
   auto frame = session->device->frame;
 
   auto shutdown_event = mail->event<bool>(mail::shutdown);
@@ -1073,12 +1041,8 @@ void encode_run(
       idr_events->pop();
     }
 
-    std::this_thread::sleep_until(next_frame);
-    next_frame += delay;
-
-    // When Moonlight request an IDR frame, send frames even if there is no new captured frame
     if(!frame->key_frame || images->peek()) {
-      if(auto img = images->pop(delay)) {
+      if(auto img = images->pop(100ms)) {
         session->device->convert(*img);
       }
       else if(images->running()) {
@@ -1130,10 +1094,7 @@ input::touch_port_t make_port(platf::display_t *display, const config_t &config)
 std::optional<sync_session_t> make_synced_session(platf::display_t *disp, const encoder_t &encoder, platf::img_t &img, sync_session_ctx_t &ctx) {
   sync_session_t encode_session;
 
-  encode_session.ctx        = &ctx;
-  encode_session.next_frame = std::chrono::steady_clock::now();
-
-  encode_session.delay = std::chrono::nanoseconds { 1s } / ctx.config.framerate;
+  encode_session.ctx = &ctx;
 
   auto pix_fmt  = ctx.config.dynamicRange == 0 ? map_pix_fmt(encoder.static_pix_fmt) : map_pix_fmt(encoder.dynamic_pix_fmt);
   auto hwdevice = disp->make_hwdevice(pix_fmt);
@@ -1149,7 +1110,6 @@ std::optional<sync_session_t> make_synced_session(platf::display_t *disp, const 
     return std::nullopt;
   }
 
-  encode_session.img_tmp  = &img;
   encode_session.hwdevice = std::move(hwdevice);
   encode_session.session  = std::move(*session);
 
@@ -1161,8 +1121,19 @@ encode_e encode_run_sync(std::vector<std::unique_ptr<sync_session_ctx_t>> &synce
 
   std::shared_ptr<platf::display_t> disp;
 
+  if(synced_session_ctxs.empty()) {
+    auto ctx = encode_session_ctx_queue.pop();
+    if(!ctx) {
+      return encode_e::ok;
+    }
+
+    synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*ctx)));
+  }
+
+  int framerate = synced_session_ctxs.front()->config.framerate;
+
   while(encode_session_ctx_queue.running()) {
-    reset_display(disp, encoder.dev_type);
+    reset_display(disp, encoder.dev_type, framerate);
     if(disp) {
       break;
     }
@@ -1175,9 +1146,7 @@ encode_e encode_run_sync(std::vector<std::unique_ptr<sync_session_ctx_t>> &synce
   }
 
   auto img = disp->alloc_img();
-
-  auto img_tmp = img.get();
-  if(disp->dummy_img(img_tmp)) {
+  if(disp->dummy_img(img.get())) {
     return encode_e::error;
   }
 
@@ -1191,109 +1160,83 @@ encode_e encode_run_sync(std::vector<std::unique_ptr<sync_session_ctx_t>> &synce
     synced_sessions.emplace_back(std::move(*synced_session));
   }
 
-  auto next_frame = std::chrono::steady_clock::now();
+  auto ec = platf::capture_e::ok;
   while(encode_session_ctx_queue.running()) {
-    while(encode_session_ctx_queue.peek()) {
-      auto encode_session_ctx = encode_session_ctx_queue.pop();
-      if(!encode_session_ctx) {
-        return encode_e::ok;
-      }
-
-      synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*encode_session_ctx)));
-
-      auto encode_session = make_synced_session(disp.get(), encoder, *img, *synced_session_ctxs.back());
-      if(!encode_session) {
-        return encode_e::error;
-      }
-
-      synced_sessions.emplace_back(std::move(*encode_session));
-
-      next_frame = std::chrono::steady_clock::now();
-    }
-
-    auto delay = std::max(0ms, std::chrono::duration_cast<std::chrono::milliseconds>(next_frame - std::chrono::steady_clock::now()));
-
-    auto status = disp->snapshot(img.get(), delay, display_cursor);
-    switch(status) {
-    case platf::capture_e::reinit:
-    case platf::capture_e::error:
-      return status;
-    case platf::capture_e::timeout:
-      break;
-    case platf::capture_e::ok:
-      img_tmp = img.get();
-      break;
-    }
-
-    auto now = std::chrono::steady_clock::now();
-
-    next_frame = now + 1s;
-    KITTY_WHILE_LOOP(auto pos = std::begin(synced_sessions), pos != std::end(synced_sessions), {
-      auto frame = pos->session.device->frame;
-      auto ctx   = pos->ctx;
-      if(ctx->shutdown_event->peek()) {
-        // Let waiting thread know it can delete shutdown_event
-        ctx->join_event->raise(true);
-
-        pos = synced_sessions.erase(pos);
-        synced_session_ctxs.erase(std::find_if(std::begin(synced_session_ctxs), std::end(synced_session_ctxs), [&ctx_p = ctx](auto &ctx) {
-          return ctx.get() == ctx_p;
-        }));
-
-        if(synced_sessions.empty()) {
-          return encode_e::ok;
+    auto snapshot_cb = [&](std::shared_ptr<platf::img_t> &img) -> std::shared_ptr<platf::img_t> {
+      while(encode_session_ctx_queue.peek()) {
+        auto encode_session_ctx = encode_session_ctx_queue.pop();
+        if(!encode_session_ctx) {
+          return nullptr;
         }
 
-        continue;
+        synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*encode_session_ctx)));
+
+        auto encode_session = make_synced_session(disp.get(), encoder, *img, *synced_session_ctxs.back());
+        if(!encode_session) {
+          ec = platf::capture_e::error;
+          return nullptr;
+        }
+
+        synced_sessions.emplace_back(std::move(*encode_session));
       }
 
-      if(ctx->idr_events->peek()) {
-        frame->pict_type = AV_PICTURE_TYPE_I;
-        frame->key_frame = 1;
+      KITTY_WHILE_LOOP(auto pos = std::begin(synced_sessions), pos != std::end(synced_sessions), {
+        auto frame = pos->session.device->frame;
+        auto ctx   = pos->ctx;
+        if(ctx->shutdown_event->peek()) {
+          // Let waiting thread know it can delete shutdown_event
+          ctx->join_event->raise(true);
 
-        ctx->idr_events->pop();
-      }
+          pos = synced_sessions.erase(pos);
+          synced_session_ctxs.erase(std::find_if(std::begin(synced_session_ctxs), std::end(synced_session_ctxs), [&ctx_p = ctx](auto &ctx) {
+            return ctx.get() == ctx_p;
+          }));
 
-      if(img_tmp) {
-        pos->img_tmp = img_tmp;
-      }
+          if(synced_sessions.empty()) {
+            return nullptr;
+          }
 
-      auto timeout = now > pos->next_frame;
-      if(timeout) {
-        pos->next_frame += pos->delay;
-      }
+          continue;
+        }
 
-      next_frame = std::min(next_frame, pos->next_frame);
+        if(ctx->idr_events->peek()) {
+          frame->pict_type = AV_PICTURE_TYPE_I;
+          frame->key_frame = 1;
 
-      if(!timeout) {
-        ++pos;
-        continue;
-      }
+          ctx->idr_events->pop();
+        }
 
-      if(pos->img_tmp) {
-        if(pos->hwdevice->convert(*pos->img_tmp)) {
+        if(pos->hwdevice->convert(*img)) {
           BOOST_LOG(error) << "Could not convert image"sv;
           ctx->shutdown_event->raise(true);
 
           continue;
         }
-        pos->img_tmp = nullptr;
-      }
 
-      if(encode(ctx->frame_nr++, pos->session, frame, ctx->packets, ctx->channel_data)) {
-        BOOST_LOG(error) << "Could not encode video packet"sv;
-        ctx->shutdown_event->raise(true);
+        if(encode(ctx->frame_nr++, pos->session, frame, ctx->packets, ctx->channel_data)) {
+          BOOST_LOG(error) << "Could not encode video packet"sv;
+          ctx->shutdown_event->raise(true);
 
-        continue;
-      }
+          continue;
+        }
 
-      frame->pict_type = AV_PICTURE_TYPE_NONE;
-      frame->key_frame = 0;
+        frame->pict_type = AV_PICTURE_TYPE_NONE;
+        frame->key_frame = 0;
 
-      ++pos;
-    })
+        ++pos;
+      })
 
-    img_tmp = nullptr;
+      return img;
+    };
+
+    auto status = disp->capture(std::move(snapshot_cb), img, &display_cursor);
+    switch(status) {
+    case platf::capture_e::reinit:
+    case platf::capture_e::error:
+    case platf::capture_e::ok:
+    case platf::capture_e::timeout:
+      return ec != platf::capture_e::ok ? ec : status;
+    }
   }
 
   return encode_e::ok;
@@ -1340,9 +1283,8 @@ void capture_async(
     return;
   }
 
-  auto delay = std::chrono::floor<std::chrono::nanoseconds>(1s) / config.framerate;
   ref->capture_ctx_queue->raise(capture_ctx_t {
-    images, delay });
+    images, config.framerate });
 
   if(!ref->capture_ctx_queue->running()) {
     return;
@@ -1432,7 +1374,7 @@ enum validate_flag_e {
 };
 
 int validate_config(std::shared_ptr<platf::display_t> &disp, const encoder_t &encoder, const config_t &config) {
-  reset_display(disp, encoder.dev_type);
+  reset_display(disp, encoder.dev_type, config.framerate);
   if(!disp) {
     return -1;
   }
@@ -1508,10 +1450,17 @@ bool validate_encoder(encoder_t &encoder) {
   config_t config_max_ref_frames { 1920, 1080, 60, 1000, 1, 1, 1, 0, 0 };
   config_t config_autoselect { 1920, 1080, 60, 1000, 1, 0, 1, 0, 0 };
 
+retry:
   auto max_ref_frames_h264 = validate_config(disp, encoder, config_max_ref_frames);
   auto autoselect_h264     = validate_config(disp, encoder, config_autoselect);
 
   if(max_ref_frames_h264 < 0 && autoselect_h264 < 0) {
+    if(encoder.h264.qp && encoder.h264[encoder_t::CBR]) {
+      // It's possible the encoder isn't accepting Constant Bit Rate. Turn off CBR and make another attempt
+      encoder.h264.capabilities.set();
+      encoder.h264[encoder_t::CBR] = false;
+      goto retry;
+    }
     return false;
   }
 
@@ -1533,12 +1482,22 @@ bool validate_encoder(encoder_t &encoder) {
     config_max_ref_frames.videoFormat = 1;
     config_autoselect.videoFormat     = 1;
 
+  retry_hevc:
     auto max_ref_frames_hevc = validate_config(disp, encoder, config_max_ref_frames);
     auto autoselect_hevc     = validate_config(disp, encoder, config_autoselect);
 
     // If HEVC must be supported, but it is not supported
-    if(force_hevc && max_ref_frames_hevc < 0 && autoselect_hevc < 0) {
-      return false;
+    if(max_ref_frames_hevc < 0 && autoselect_hevc < 0) {
+      if(encoder.hevc.qp && encoder.hevc[encoder_t::CBR]) {
+        // It's possible the encoder isn't accepting Constant Bit Rate. Turn off CBR and make another attempt
+        encoder.hevc.capabilities.set();
+        encoder.hevc[encoder_t::CBR] = false;
+        goto retry_hevc;
+      }
+
+      if(force_hevc) {
+        return false;
+      }
     }
 
     for(auto [validate_flag, encoder_flag] : packet_deficiencies) {

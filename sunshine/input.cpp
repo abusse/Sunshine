@@ -47,7 +47,7 @@ void free_id(std::bitset<N> &gamepad_mask, int id) {
   gamepad_mask[id] = false;
 }
 
-static util::TaskPool::task_id_t task_id {};
+static util::TaskPool::task_id_t key_press_repeat_id {};
 static std::unordered_map<short, bool> key_press {};
 static std::array<std::uint8_t, 5> mouse_press {};
 
@@ -85,10 +85,13 @@ struct gamepad_t {
 };
 
 struct input_t {
-  input_t(safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event)
+  input_t(
+    safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event,
+    platf::rumble_queue_t rumble_queue)
       : active_gamepad_state {},
         gamepads(MAX_GAMEPADS),
         touch_port_event { std::move(touch_port_event) },
+        rumble_queue { std::move(rumble_queue) },
         mouse_left_button_timeout {},
         touch_port { 0, 0, 0, 0, 0, 0, 1.0f } {}
 
@@ -96,6 +99,7 @@ struct input_t {
   std::vector<gamepad_t> gamepads;
 
   safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event;
+  platf::rumble_queue_t rumble_queue;
 
   util::ThreadPool::task_id_t mouse_left_button_timeout;
 
@@ -147,7 +151,8 @@ void print(PNV_KEYBOARD_PACKET packet) {
 }
 
 void print(PNV_MULTI_CONTROLLER_PACKET packet) {
-  BOOST_LOG(debug)
+  // Moonlight spams controller packet even when not necessary
+  BOOST_LOG(verbose)
     << "--begin controller packet--"sv << std::endl
     << "controllerNumber ["sv << packet->controllerNumber << ']' << std::endl
     << "activeGamepadMask ["sv << util::hex(packet->activeGamepadMask).to_string_view() << ']' << std::endl
@@ -315,13 +320,13 @@ void passthrough(std::shared_ptr<input_t> &input, PNV_MOUSE_BUTTON_PACKET packet
 void repeat_key(short key_code) {
   // If key no longer pressed, stop repeating
   if(!key_press[key_code]) {
-    task_id = nullptr;
+    key_press_repeat_id = nullptr;
     return;
   }
 
   platf::keyboard(platf_input, key_code & 0x00FF, false);
 
-  task_id = task_pool.pushDelayed(repeat_key, config::input.key_repeat_period, key_code).task_id;
+  key_press_repeat_id = task_pool.pushDelayed(repeat_key, config::input.key_repeat_period, key_code).task_id;
 }
 
 short map_keycode(short keycode) {
@@ -346,12 +351,12 @@ void passthrough(std::shared_ptr<input_t> &input, PNV_KEYBOARD_PACKET packet) {
   auto &pressed = key_press[packet->keyCode];
   if(!pressed) {
     if(!release) {
-      if(task_id) {
-        task_pool.cancel(task_id);
+      if(key_press_repeat_id) {
+        task_pool.cancel(key_press_repeat_id);
       }
 
       if(config::input.key_repeat_delay.count() > 0) {
-        task_id = task_pool.pushDelayed(repeat_key, config::input.key_repeat_delay, packet->keyCode).task_id;
+        key_press_repeat_id = task_pool.pushDelayed(repeat_key, config::input.key_repeat_delay, packet->keyCode).task_id;
       }
     }
     else {
@@ -375,7 +380,7 @@ void passthrough(PNV_SCROLL_PACKET packet) {
   platf::scroll(platf_input, util::endian::big(packet->scrollAmt1));
 }
 
-int updateGamepads(std::vector<gamepad_t> &gamepads, std::int16_t old_state, std::int16_t new_state) {
+int updateGamepads(std::vector<gamepad_t> &gamepads, std::int16_t old_state, std::int16_t new_state, platf::rumble_queue_t rumble_queue) {
   auto xorGamepadMask = old_state ^ new_state;
   if(!xorGamepadMask) {
     return 0;
@@ -401,7 +406,7 @@ int updateGamepads(std::vector<gamepad_t> &gamepads, std::int16_t old_state, std
           return -1;
         }
 
-        if(platf::alloc_gamepad(platf_input, id)) {
+        if(platf::alloc_gamepad(platf_input, id, std::move(rumble_queue))) {
           free_id(gamepadMask, id);
           // allocating a gamepad failed: solution: ignore gamepads
           // The implementations of platf::alloc_gamepad already has logging
@@ -417,7 +422,7 @@ int updateGamepads(std::vector<gamepad_t> &gamepads, std::int16_t old_state, std
 }
 
 void passthrough(std::shared_ptr<input_t> &input, PNV_MULTI_CONTROLLER_PACKET packet) {
-  if(updateGamepads(input->gamepads, input->active_gamepad_state, packet->activeGamepadMask)) {
+  if(updateGamepads(input->gamepads, input->active_gamepad_state, packet->activeGamepadMask, input->rumble_queue)) {
     return;
   }
 
@@ -553,7 +558,7 @@ void passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&in
 }
 
 void reset(std::shared_ptr<input_t> &input) {
-  task_pool.cancel(task_id);
+  task_pool.cancel(key_press_repeat_id);
   task_pool.cancel(input->mouse_left_button_timeout);
 
   // Ensure input is synchronous, by using the task_pool
@@ -572,12 +577,23 @@ void reset(std::shared_ptr<input_t> &input) {
   });
 }
 
-void init() {
+class deinit_t : public platf::deinit_t {
+public:
+  ~deinit_t() override {
+    platf_input.reset();
+  }
+};
+
+[[nodiscard]] std::unique_ptr<platf::deinit_t> init() {
   platf_input = platf::input();
+
+  return std::make_unique<deinit_t>();
 }
 
 std::shared_ptr<input_t> alloc(safe::mail_t mail) {
-  auto input = std::make_shared<input_t>(mail->event<input::touch_port_t>(mail::touch_port));
+  auto input = std::make_shared<input_t>(
+    mail->event<input::touch_port_t>(mail::touch_port),
+    mail->queue<platf::rumble_t>(mail::rumble));
 
   // Workaround to ensure new frames will be captured when a client connects
   task_pool.pushDelayed([]() {
