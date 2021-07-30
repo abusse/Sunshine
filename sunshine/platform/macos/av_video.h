@@ -6,6 +6,8 @@
 
 @interface AVVideo : NSObject <AVCaptureVideoDataOutputSampleBufferDelegate>
 
+#define kMaxDisplays 32
+
 @property(nonatomic, assign) CMTime minFrameDuration;
 @property(nonatomic, assign) int frameWidth;
 @property(nonatomic, assign) int frameHeight;
@@ -18,8 +20,10 @@ typedef bool (^frameCallbackBlock)(CGImageRef);
 @property(nonatomic, assign) AVCaptureConnection *videoConnection;
 @property(nonatomic, assign) NSCondition *captureStopped;
 
-- (id)initWithFrameRate:(int)frameRate;
-- (id)initWithFrameRate:(int)frameRate width:(int)width height:(int)height;
++ (NSArray<NSDictionary *> *)displayNames;
+
+- (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate;
+- (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate width:(int)width height:(int)height;
 
 - (bool)capture:(frameCallbackBlock)frameCallback;
 

@@ -2,11 +2,35 @@
 
 @implementation AVVideo
 
-- (id)initWithFrameRate:(int)frameRate {
-  return [self initWithFrameRate:frameRate width:0 height:0];
+// XXX: Currenty, this function only returns the screen IDs as names,
+// which is not very helpfull to the user. The API to retrieve names
+// was deprecated with 10.9+.
+// However, there is a solution with little external code that can be used:
+// https://stackoverflow.com/questions/20025868/cgdisplayioserviceport-is-deprecated-in-os-x-10-9-how-to-replace
++ (NSArray<NSDictionary *> *)displayNames {
+  NSMutableArray *result = [[NSMutableArray alloc] init];
+  
+  CGDirectDisplayID displays[kMaxDisplays];
+  uint32_t count;
+  if(CGGetActiveDisplayList(kMaxDisplays, displays, &count) != kCGErrorSuccess) {
+    return result;
+  }
+
+  for(uint32_t i = 0; i < count; i++) {
+    [result addObject:@{
+      @"id": [NSNumber numberWithUnsignedInt:displays[i]],
+      @"name": [NSString stringWithFormat:@"%d", displays[i]]
+    }];
+  }
+
+  return result;
 }
 
-- (id)initWithFrameRate:(int)frameRate width:(int)width height:(int)height {
+- (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate {
+  return [self initWithDisplay:displayID frameRate:frameRate width:0 height:0];
+}
+
+- (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate width:(int)width height:(int)height {
   self = [super init];
 
   self.capture = false;
@@ -18,7 +42,7 @@
 
   self.session = [[AVCaptureSession alloc] init];
 
-  AVCaptureScreenInput *screenInput = [[AVCaptureScreenInput alloc] initWithDisplayID:CGMainDisplayID()];
+  AVCaptureScreenInput *screenInput = [[AVCaptureScreenInput alloc] initWithDisplayID:displayID];
   [screenInput setMinFrameDuration:self.minFrameDuration];
 
   if([self.session canAddInput:screenInput]) {

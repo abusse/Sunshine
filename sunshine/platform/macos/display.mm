@@ -31,6 +31,11 @@ struct avmic_attr_t : public mic_t {
     [mic release];
   }
 
+  std::vector<std::string> display_names() {
+    std::vector<std::string> display_names;
+    return display_names;
+  }
+
   capture_e sample(std::vector<std::int16_t> &sample_in) override {
     auto sample_size = sample_in.size();
 
@@ -107,6 +112,7 @@ struct avdisplay_img_t : public img_t {
 
 struct avdisplay_attr_t : public display_t {
   AVVideo *display;
+  CGDirectDisplayID display_id;
 
   ~avdisplay_attr_t() {
     [display release];
@@ -149,7 +155,7 @@ struct avdisplay_attr_t : public display_t {
   }
 
   int dummy_img(img_t *img) override {
-    auto imgRef = CGDisplayCreateImage(CGMainDisplayID());
+    auto imgRef = CGDisplayCreateImage(display_id);
 
     if(!imgRef)
       return -1;
@@ -165,12 +171,14 @@ struct avdisplay_attr_t : public display_t {
     img->height      = CGImageGetHeight(imgRef);
     img->row_pitch   = CGImageGetBytesPerRow(imgRef);
     img->pixel_pitch = CGImageGetBitsPerPixel(imgRef) / 8;
+    
+    CFRelease(imgRef);
 
     return 0;
   }
 };
 
-std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type, int framerate) {
+std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type, const std::string &display_name, int framerate) {
   if(hwdevice_type != platf::mem_type_e::system && hwdevice_type != platf::mem_type_e::videotoolbox) {
     BOOST_LOG(error) << "Could not initialize display with the given hw device type."sv;
     return nullptr;
@@ -187,7 +195,20 @@ std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type, int framerat
     BOOST_LOG(info) << "Capturing with "sv << capture_width << "x"sv << capture_height;
   }
 
-  result->display = [[AVVideo alloc] initWithFrameRate:framerate width:capture_width height:capture_height];
+  result->display_id = CGMainDisplayID();
+  if(!display_name.empty()) {
+    auto display_array = [AVVideo displayNames];
+
+    for(NSDictionary *item in display_array) {
+      NSString *name = item[@"name"];
+      if(name.UTF8String == display_name) {
+        NSNumber *display_id = item[@"id"];
+        result->display_id   = [display_id unsignedIntValue];
+      }
+    }
+  }
+
+  result->display = [[AVVideo alloc] initWithDisplay:result->display_id frameRate:framerate width:capture_width height:capture_height];
 
   if(!result->display) {
     BOOST_LOG(error) << "Video setup failed."sv;
@@ -205,6 +226,20 @@ std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type, int framerat
   }
 
   return result;
+}
+
+std::vector<std::string> display_names() {
+  __block std::vector<std::string> display_names;
+
+  auto display_array = [AVVideo displayNames];
+
+  display_names.reserve([display_array count]);
+  [display_array enumerateObjectsUsingBlock:^(NSDictionary *_Nonnull obj, NSUInteger idx, BOOL *_Nonnull stop) {
+    NSString *name = obj[@"name"];
+    display_names.push_back(name.UTF8String);
+  }];
+
+  return display_names;
 }
 
 std::unique_ptr<audio_control_t> audio_control() {
