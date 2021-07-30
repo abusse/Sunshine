@@ -16,6 +16,7 @@
 #import <ApplicationServices/ApplicationServices.h>
 
 #include <iomanip>
+#include <memory>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -92,11 +93,14 @@ public:
 };
 
 struct avdisplay_img_t : public img_t {
-  CFDataRef img;
+  // We have to retain the DataRef to an image for the image buffer
+  // and release it when the image buffer is no longer needed
+  // XXX: this should be replaced by a smart pointer with CFRelease as custom deallocator
+  CFDataRef dataRef = nullptr;
 
   ~avdisplay_img_t() override {
-    if(img != NULL)
-      CFRelease(img);
+    if(dataRef != NULL)
+      CFRelease(dataRef);
     data = nullptr;
   }
 };
@@ -108,29 +112,34 @@ struct avdisplay_attr_t : public display_t {
     [display release];
   }
 
-  //XXX: Replace
-  capture_e snapshot(img_t *img_out_base, std::chrono::milliseconds timeout, bool cursor) {
-    auto img_out = (avdisplay_img_t *)img_out_base;
+  capture_e capture(snapshot_cb_t &&snapshot_cb, std::shared_ptr<img_t> img, bool *cursor) override {
+    __block auto next_img = std::move(img);
 
-    auto img = [display getSnapshot:CMTimeMake(timeout.count(), 1000) showCursor:cursor];
+    [display capture:^(CGImageRef imgRef) {
+      CGDataProviderRef dataProvider = CGImageGetDataProvider(imgRef);
 
-    CGDataProviderRef dataProvider = CGImageGetDataProvider(img);
+      CFDataRef dataRef = CGDataProviderCopyData(dataProvider);
 
-    CFDataRef dataRef = CGDataProviderCopyData(dataProvider);
+      // XXX: next_img->img should be moved to a smart pointer with
+      // the CFRelease as custon deallocator
+      if((std::static_pointer_cast<avdisplay_img_t>(next_img))->dataRef != nullptr) {
+        CFRelease((std::static_pointer_cast<avdisplay_img_t>(next_img))->dataRef);
+      }
 
-    if(img_out->img != NULL) {
-      CFRelease(img_out->img);
-    }
+      (std::static_pointer_cast<avdisplay_img_t>(next_img))->dataRef = dataRef;
+      next_img->data                                                 = (uint8_t *)CFDataGetBytePtr(dataRef);
 
-    img_out->img  = dataRef;
-    img_out->data = (uint8_t *)CFDataGetBytePtr(dataRef);
+      next_img->width       = CGImageGetWidth(imgRef);
+      next_img->height      = CGImageGetHeight(imgRef);
+      next_img->row_pitch   = CGImageGetBytesPerRow(imgRef);
+      next_img->pixel_pitch = CGImageGetBitsPerPixel(imgRef) / 8;
 
-    img_out->width       = CGImageGetWidth(img);
-    img_out->height      = CGImageGetHeight(img);
-    img_out->row_pitch   = CGImageGetBytesPerRow(img);
-    img_out->pixel_pitch = CGImageGetBitsPerPixel(img) / 8;
+      next_img = snapshot_cb(next_img);
 
-    CGImageRelease(img);
+      return next_img != nullptr;
+    }];
+
+    [display.captureStopped wait];
 
     return capture_e::ok;
   }
@@ -140,20 +149,34 @@ struct avdisplay_attr_t : public display_t {
   }
 
   int dummy_img(img_t *img) override {
-    snapshot(img, 0s, true);
+    auto imgRef = CGDisplayCreateImage(CGMainDisplayID());
+
+    if(!imgRef)
+      return -1;
+
+    CGDataProviderRef dataProvider = CGImageGetDataProvider(imgRef);
+
+    CFDataRef dataRef = CGDataProviderCopyData(dataProvider);
+
+    ((avdisplay_img_t *)img)->dataRef = dataRef;
+    img->data                         = (uint8_t *)CFDataGetBytePtr(dataRef);
+
+    img->width       = CGImageGetWidth(imgRef);
+    img->height      = CGImageGetHeight(imgRef);
+    img->row_pitch   = CGImageGetBytesPerRow(imgRef);
+    img->pixel_pitch = CGImageGetBitsPerPixel(imgRef) / 8;
+
     return 0;
   }
 };
 
-std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type) {
+std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type, int framerate) {
   if(hwdevice_type != platf::mem_type_e::system && hwdevice_type != platf::mem_type_e::videotoolbox) {
     BOOST_LOG(error) << "Could not initialize display with the given hw device type."sv;
     return nullptr;
   }
 
   auto result = std::make_shared<avdisplay_attr_t>();
-
-  result->display = [[AVVideo alloc] init];
 
   int capture_width  = 0;
   int capture_height = 0;
@@ -164,17 +187,22 @@ std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type) {
     BOOST_LOG(info) << "Capturing with "sv << capture_width << "x"sv << capture_height;
   }
 
-  if(![result->display setupVideo:capture_width
-                           height:capture_height
-                        frameRate:60]) {
+  result->display = [[AVVideo alloc] initWithFrameRate:framerate width:capture_width height:capture_height];
+
+  if(!result->display) {
     BOOST_LOG(error) << "Video setup failed."sv;
     return nullptr;
   }
 
   auto tmp_image = result->alloc_img();
-  result->dummy_img(tmp_image.get());
-  result->width  = tmp_image->width;
-  result->height = tmp_image->height;
+  if(result->dummy_img(tmp_image.get())) {
+    result->width  = capture_width;
+    result->height = capture_height;
+  }
+  else {
+    result->width  = tmp_image->width;
+    result->height = tmp_image->height;
+  }
 
   return result;
 }

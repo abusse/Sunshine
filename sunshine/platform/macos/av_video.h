@@ -6,12 +6,22 @@
 
 @interface AVVideo : NSObject <AVCaptureVideoDataOutputSampleBufferDelegate>
 
+@property(nonatomic, assign) CMTime minFrameDuration;
+@property(nonatomic, assign) int frameWidth;
+@property(nonatomic, assign) int frameHeight;
+@property(atomic, assign) bool capture;
+
+typedef bool (^frameCallbackBlock)(CGImageRef);
+@property(nonatomic, copy) frameCallbackBlock frameCallback;
+
 @property(nonatomic, assign) AVCaptureSession *session;
 @property(nonatomic, assign) AVCaptureConnection *videoConnection;
-@property(nonatomic, assign) CGContextRef currentFrame;
+@property(nonatomic, assign) NSCondition *captureStopped;
 
-- (BOOL)setupVideo:(int)width height:(int)height frameRate:(int)frameRate;
-- (CGImageRef)getSnapshot:(CMTime)timeout showCursor:(bool)showCursor;
+- (id)initWithFrameRate:(int)frameRate;
+- (id)initWithFrameRate:(int)frameRate width:(int)width height:(int)height;
+
+- (bool)capture:(frameCallbackBlock)frameCallback;
 
 @end
 

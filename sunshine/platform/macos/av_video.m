@@ -2,37 +2,40 @@
 
 @implementation AVVideo
 
-- (void)dealloc {
-  self.videoConnection = nil;
-  @synchronized(self) {
-    CGContextRelease(self.currentFrame);
-  }
-  [self.session release];
-  [super dealloc];
+- (id)initWithFrameRate:(int)frameRate {
+  return [self initWithFrameRate:frameRate width:0 height:0];
 }
 
-- (BOOL)setupVideo:(int)width height:(int)height frameRate:(int)frameRate {
-  self.currentFrame = nil;
-  self.session      = [[AVCaptureSession alloc] init];
+- (id)initWithFrameRate:(int)frameRate width:(int)width height:(int)height {
+  self = [super init];
+
+  self.capture = false;
+
+  self.frameWidth       = width;
+  self.frameHeight      = height;
+  self.minFrameDuration = CMTimeMake(1, frameRate);
+  self.captureStopped   = [[NSCondition alloc] init];
+
+  self.session = [[AVCaptureSession alloc] init];
 
   AVCaptureScreenInput *screenInput = [[AVCaptureScreenInput alloc] initWithDisplayID:CGMainDisplayID()];
-  [screenInput setMinFrameDuration:CMTimeMake(1, frameRate)];
+  [screenInput setMinFrameDuration:self.minFrameDuration];
 
   if([self.session canAddInput:screenInput]) {
     [self.session addInput:screenInput];
   }
   else {
     [screenInput release];
-    return false;
+    return nil;
   }
 
   AVCaptureVideoDataOutput *movieOutput = [[AVCaptureVideoDataOutput alloc] init];
 
-  if(height > 0 && width > 0) {
+  if(self.frameWidth > 0 && self.frameWidth > 0) {
     [movieOutput setVideoSettings:@{
       (NSString *)kCVPixelBufferPixelFormatTypeKey: [NSNumber numberWithUnsignedInt:kCVPixelFormatType_32BGRA],
-      (NSString *)kCVPixelBufferWidthKey: [NSNumber numberWithInt:width],
-      (NSString *)kCVPixelBufferHeightKey: [NSNumber numberWithInt:height]
+      (NSString *)kCVPixelBufferWidthKey: [NSNumber numberWithInt:self.frameWidth],
+      (NSString *)kCVPixelBufferHeightKey: [NSNumber numberWithInt:self.frameHeight]
     }];
   }
   else {
@@ -50,40 +53,34 @@
     [self.session addOutput:movieOutput];
   }
   else {
-    [screenInput release];
     [movieOutput release];
-    return false;
+    return nil;
   }
 
   self.videoConnection = [movieOutput connectionWithMediaType:AVMediaTypeVideo];
 
-  [self.session startRunning];
-
-  [screenInput release];
-  [movieOutput release];
-
-  return true;
+  return self;
 }
 
-- (CGImageRef)getSnapshot:(CMTime)timeout showCursor:(bool)showCursor {
-  CGImageRef result = NULL;
+- (void)dealloc {
+  self.videoConnection = nil;
+  [self.session stopRunning];
+  [super dealloc];
+}
 
-  while(result == NULL) {
-    @synchronized(self) {
-      if(self.currentFrame != NULL) {
-        result = CGBitmapContextCreateImage(self.currentFrame);
-      }
-    }
-  }
+- (bool)capture:(frameCallbackBlock)frameCallback {
+  self.frameCallback = frameCallback;
+  self.capture       = true;
 
-  // this has to be released by the caller
-  return result;
+  [self.session startRunning];
+
+  return true;
 }
 
 - (void)captureOutput:(AVCaptureOutput *)captureOutput
   didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
          fromConnection:(AVCaptureConnection *)connection {
-  if(connection == self.videoConnection) {
+  if(connection == self.videoConnection && self.capture) {
     CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
     CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
 
@@ -93,14 +90,18 @@
 
     CGContextRef cgContext = CGBitmapContextCreate(baseAddr, width, height, 8, CVPixelBufferGetBytesPerRow(pixelBuffer), CGColorSpaceCreateDeviceRGB(), kCGImageAlphaNoneSkipLast);
 
-    CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
-
-    if(cgContext != NULL) {
-      @synchronized(self) {
-        CGContextRelease(self.currentFrame);
-        self.currentFrame = cgContext;
-      }
+    CGImageRef cgImage = CGBitmapContextCreateImage(cgContext);
+    if(!self.frameCallback(cgImage)) {
+      [self.session stopRunning];
+      // this ensures that we do not try to forward frames that
+      // are eventually still queued for processing
+      self.capture = false;
+      [self.captureStopped broadcast];
     }
+
+    CFRelease(cgImage);
+    CGContextRelease(cgContext);
+    CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
   }
 }
 
