@@ -251,7 +251,7 @@ void keyboard(input_t &input, uint16_t modcode, bool release) {
   CFRelease(source);
 }
 
-int alloc_gamepad(input_t &input, int nr) {
+int alloc_gamepad(input_t &input, int nr, rumble_queue_t &&rumble_queue) {
   BOOST_LOG(debug) << "alloc_gamepad: Gamepad not yet implemented for MacOS."sv;
   return -1;
 }
@@ -364,5 +364,11 @@ void freeInput(void *p) {
 
 std::unique_ptr<deinit_t> init() {
   return std::make_unique<deinit_t>();
+}
+
+std::vector<std::string_view> &supported_gamepads() {
+  static std::vector<std::string_view> gamepads { "x360"sv };
+
+  return gamepads;
 }
 } // namespace platf
