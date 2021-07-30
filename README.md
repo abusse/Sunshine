@@ -121,6 +121,11 @@ sudo port install cmake boost libopus ffmpeg
 - Click on one of the Applications listed
 - Have fun :)
 
+## Shortcuts:
+
+All shortcuts start with CTRL + ALT + SHIFT, just like Moonlight
+- CTRL + ALT + SHIFT + N --> Hide/Unhide the cursor (This may be usefull for Remote Desktop Mode for Moonlight)
+- CTRL + ALT + SHIFT + F1/F13 --> Switch to different monitor for Streaming
 
 ## Note:
 - The Windows key is not passed through by Moonlight, therefore Sunshine maps Right-Alt key to the Windows key
