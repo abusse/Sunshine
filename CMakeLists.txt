@@ -147,6 +147,7 @@ elseif(APPLE)
 		sunshine/platform/macos/av_video.m
 		sunshine/platform/macos/display.mm
 		sunshine/platform/macos/input.cpp
+		sunshine/platform/macos/microphone.mm
 		sunshine/platform/macos/misc.cpp
 		sunshine/platform/macos/misc.h
 		sunshine/platform/macos/publish.cpp
