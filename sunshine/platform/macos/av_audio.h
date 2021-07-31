@@ -2,7 +2,6 @@
 #define SUNSHINE_PLATFORM_AV_AUDIO_H
 
 #import <AVFoundation/AVFoundation.h>
-#import <CoreFoundation/CoreFoundation.h>
 
 #include "sunshine/platform/macos/TPCircularBuffer/TPCircularBuffer.h"
 

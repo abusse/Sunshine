@@ -2,7 +2,6 @@
 #define SUNSHINE_PLATFORM_AV_VIDEO_H
 
 #import <AVFoundation/AVFoundation.h>
-#import <CoreFoundation/CoreFoundation.h>
 
 @interface AVVideo : NSObject <AVCaptureVideoDataOutputSampleBufferDelegate>
 

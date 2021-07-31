@@ -9,7 +9,7 @@
 // https://stackoverflow.com/questions/20025868/cgdisplayioserviceport-is-deprecated-in-os-x-10-9-how-to-replace
 + (NSArray<NSDictionary *> *)displayNames {
   NSMutableArray *result = [[NSMutableArray alloc] init];
-  
+
   CGDirectDisplayID displays[kMaxDisplays];
   uint32_t count;
   if(CGGetActiveDisplayList(kMaxDisplays, displays, &count) != kCGErrorSuccess) {

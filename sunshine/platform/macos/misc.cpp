@@ -1,24 +1,11 @@
 #include <arpa/inet.h>
 #include <ifaddrs.h>
-
 #include <net/if_dl.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-
 #include <pwd.h>
-#include <unistd.h>
-
-#include <fstream>
 
 #include "misc.h"
 #include "sunshine/main.h"
 #include "sunshine/platform/common.h"
-
-#ifdef __GNUC__
-#define SUNSHINE_GNUC_EXTENSION __extension__
-#else
-#define SUNSHINE_GNUC_EXTENSION
-#endif
 
 using namespace std::literals;
 namespace fs = std::filesystem;
@@ -114,8 +101,7 @@ std::string get_mac_address(const std::string_view &address) {
     }
   }
 
-  BOOST_LOG(warning)
-    << "Unable to find MAC address for "sv << address;
+  BOOST_LOG(warning) << "Unable to find MAC address for "sv << address;
   return "00:00:00:00:00:00"s;
 }
 } // namespace platf

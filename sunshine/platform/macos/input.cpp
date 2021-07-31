@@ -1,13 +1,8 @@
-#include <algorithm>
-#include <cstring>
-#include <filesystem>
+#import <Carbon/Carbon.h>
 
 #include "sunshine/main.h"
 #include "sunshine/platform/common.h"
 #include "sunshine/utility.h"
-
-#import <ApplicationServices/ApplicationServices.h>
-#import <Carbon/Carbon.h>
 
 namespace platf {
 using namespace std::literals;
