@@ -146,6 +146,42 @@ int coder_from_view(const std::string_view &coder) {
 }
 } // namespace amd
 
+namespace vt {
+
+enum coder_e : int {
+  _auto = 0,
+  cabac,
+  cavlc
+};
+
+int coder_from_view(const std::string_view &coder) {
+  if(coder == "auto"sv) return _auto;
+  if(coder == "cabac"sv || coder == "ac"sv) return cabac;
+  if(coder == "cavlc"sv || coder == "vlc"sv) return cavlc;
+
+  return -1;
+}
+
+int allow_software_from_view(const std::string_view &software) {
+  if (software == "allowed"sv || software == "forced") return 1;
+  
+  return 0;
+}
+
+int force_software_from_view(const std::string_view &software) {
+  if (software == "forced") return 1;
+  
+  return 0;
+}
+
+int rt_from_view(const std::string_view &rt) {
+  if (rt == "disabled") return 0;
+  
+  return 1;
+}
+
+} // namespace vt
+
 video_t video {
   28, // qp
 
@@ -600,12 +636,10 @@ void apply_config(std::unordered_map<std::string, std::string> &&vars) {
   int_f(vars, "amd_rc", video.amd.rc, amd::rc_from_view);
   int_f(vars, "amd_coder", video.amd.coder, amd::coder_from_view);
 
-  bool vt_allow_sw = false;
-  bool_f(vars, "vt_allow_sw", vt_allow_sw);
-  bool vt_require_sw = false;
-  bool_f(vars, "vt_require_sw", vt_require_sw);
-  bool vt_realtime = true;
-  bool_f(vars, "vt_realtime", vt_realtime);
+  int_f(vars, "vt_coder", video.vt.coder, vt::coder_from_view);
+  int_f(vars, "vt_software", video.vt.allow_sw, vt::allow_software_from_view);
+  int_f(vars, "vt_software", video.vt.require_sw, vt::force_software_from_view);
+  int_f(vars, "vt_realtime", video.vt.realtime, vt::rt_from_view);
 
   string_f(vars, "encoder", video.encoder);
   string_f(vars, "adapter_name", video.adapter_name);

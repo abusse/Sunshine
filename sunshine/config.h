@@ -36,9 +36,10 @@ struct video_t {
   } amd;
 
   struct {
-    std::optional<bool> allow_sw;
-    std::optional<bool> require_sw;
-    std::optional<bool> realtime;
+    int allow_sw;
+    int require_sw;
+    int realtime;
+    int coder;
   } vt;
 
   std::string encoder;

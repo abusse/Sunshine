@@ -550,18 +550,18 @@ static encoder_t videotoolbox {
   AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV420P,
   {
     {
-      { "allow_sw"s, config::video.vt.allow_sw ? "true" : "false" },
-      { "require_sw"s, config::video.vt.require_sw ? "true" : "false" },
-      { "realtime"s, config::video.vt.realtime ? "true" : "false" },
+      { "allow_sw"s, &config::video.vt.allow_sw},
+      { "require_sw"s, &config::video.vt.require_sw},
+      { "realtime"s, &config::video.vt.realtime},
     },
     std::nullopt,
     "hevc_videotoolbox"s,
   },
   {
     {
-      { "allow_sw"s, config::video.vt.allow_sw ? "true" : "false" },
-      { "require_sw"s, config::video.vt.require_sw ? "true" : "false" },
-      { "realtime"s, config::video.vt.realtime ? "true" : "false" },
+      { "allow_sw"s, &config::video.vt.allow_sw},
+      { "require_sw"s, &config::video.vt.require_sw},
+      { "realtime"s, &config::video.vt.realtime},
     },
     std::nullopt,
     "h264_videotoolbox"s,
