@@ -65,19 +65,28 @@ sunshine needs access to uinput to create mouse and gamepad events:
 ## macOS
 
 ### Requirements:
-macOS Big Sur:
+macOS Big Sur and Xcode 12.5+:
 
-Using [MacPorts](https://www.macports.org), install the following
+Either, using [MacPorts](https://www.macports.org), install the following
 ```
 sudo port install cmake boost libopus ffmpeg
+```
+
+Or, using [Homebrew](https://brew.sh), install the follwoing:
+```
+brew install boost cmake ffmpeg libopusenc
+# if there are issues with an SSL header that is not found:
+cd /usr/local/include
+ln -s ../opt/openssl/include/openssl .
 ```
 
 ### Compilation:
 - `git clone https://github.com/loki-47-6F-64/sunshine.git --recurse-submodules`
 - `cd sunshine && mkdir build && cd build`
-- `cmake -DBOOST_ROOT=[boost path] ..`
+- `cmake ..`
 - `make -j ${nproc}`
 
+If cmake fails complaining to find Boost, try to set the path explicitly: `cmake -DBOOST_ROOT=[boost path] ..`
 
 ### Setup:
 - `assets/sunshine.conf` is an example configuration file. Modify it as you see fit, then use it by running: 

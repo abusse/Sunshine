@@ -121,6 +121,7 @@ elseif(APPLE)
 	add_compile_definitions(SUNSHINE_PLATFORM="macos")
 	list(APPEND SUNSHINE_DEFINITIONS APPS_JSON="apps_mac.json")
 	link_directories(/opt/local/lib)
+	link_directories(/usr/local/lib)
 	ADD_DEFINITIONS(-DBOOST_LOG_DYN_LINK)
 
 	find_package(FFmpeg REQUIRED)
