@@ -13,11 +13,21 @@ struct avdisplay_img_t : public img_t {
   // We have to retain the DataRef to an image for the image buffer
   // and release it when the image buffer is no longer needed
   // XXX: this should be replaced by a smart pointer with CFRelease as custom deallocator
-  CFDataRef dataRef = nullptr;
+  CVPixelBufferRef pixelBuffer   = nullptr;
+  CMSampleBufferRef sampleBuffer = nullptr;
+  bool isPooled                  = false;
 
   ~avdisplay_img_t() override {
-    if(dataRef != NULL)
-      CFRelease(dataRef);
+    if(pixelBuffer != NULL) {
+      CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
+      if(!isPooled) {
+        CFRelease(pixelBuffer);
+      }
+    }
+
+    if(sampleBuffer != nullptr) {
+      CFRelease(sampleBuffer);
+    }
     data = nullptr;
   }
 };
@@ -33,24 +43,30 @@ struct avdisplay_attr_t : public display_t {
   capture_e capture(snapshot_cb_t &&snapshot_cb, std::shared_ptr<img_t> img, bool *cursor) override {
     __block auto next_img = std::move(img);
 
-    [display capture:^(CGImageRef imgRef) {
-      CGDataProviderRef dataProvider = CGImageGetDataProvider(imgRef);
+    [display capture:^(CMSampleBufferRef sampleBuffer) {
+      CFRetain(sampleBuffer);
 
-      CFDataRef dataRef = CGDataProviderCopyData(dataProvider);
+      CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+      CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
 
       // XXX: next_img->img should be moved to a smart pointer with
       // the CFRelease as custon deallocator
-      if((std::static_pointer_cast<avdisplay_img_t>(next_img))->dataRef != nullptr) {
-        CFRelease((std::static_pointer_cast<avdisplay_img_t>(next_img))->dataRef);
-      }
+      if((std::static_pointer_cast<avdisplay_img_t>(next_img))->pixelBuffer != nullptr)
+        CVPixelBufferUnlockBaseAddress((std::static_pointer_cast<avdisplay_img_t>(next_img))->pixelBuffer, kCVPixelBufferLock_ReadOnly);
 
-      (std::static_pointer_cast<avdisplay_img_t>(next_img))->dataRef = dataRef;
-      next_img->data                                                 = (uint8_t *)CFDataGetBytePtr(dataRef);
+      if((std::static_pointer_cast<avdisplay_img_t>(next_img))->sampleBuffer != nullptr)
+        CFRelease((std::static_pointer_cast<avdisplay_img_t>(next_img))->sampleBuffer);
 
-      next_img->width       = CGImageGetWidth(imgRef);
-      next_img->height      = CGImageGetHeight(imgRef);
-      next_img->row_pitch   = CGImageGetBytesPerRow(imgRef);
-      next_img->pixel_pitch = CGImageGetBitsPerPixel(imgRef) / 8;
+
+      (std::static_pointer_cast<avdisplay_img_t>(next_img))->sampleBuffer = sampleBuffer;
+      (std::static_pointer_cast<avdisplay_img_t>(next_img))->pixelBuffer  = pixelBuffer;
+      (std::static_pointer_cast<avdisplay_img_t>(next_img))->isPooled     = true;
+      next_img->data                                                      = (uint8_t *)CVPixelBufferGetBaseAddress(pixelBuffer);
+
+      next_img->width       = CVPixelBufferGetWidth(pixelBuffer);
+      next_img->height      = CVPixelBufferGetHeight(pixelBuffer);
+      next_img->row_pitch   = CVPixelBufferGetBytesPerRow(pixelBuffer);
+      next_img->pixel_pitch = next_img->row_pitch / next_img->width;
 
       next_img = snapshot_cb(next_img);
 
@@ -67,24 +83,18 @@ struct avdisplay_attr_t : public display_t {
   }
 
   int dummy_img(img_t *img) override {
-    auto imgRef = CGDisplayCreateImage(display_id);
+    auto pixelBuffer = [display screenshot];
 
-    if(!imgRef)
+    if(!pixelBuffer)
       return -1;
 
-    CGDataProviderRef dataProvider = CGImageGetDataProvider(imgRef);
+    ((avdisplay_img_t *)img)->pixelBuffer = pixelBuffer;
 
-    CFDataRef dataRef = CGDataProviderCopyData(dataProvider);
-
-    ((avdisplay_img_t *)img)->dataRef = dataRef;
-    img->data                         = (uint8_t *)CFDataGetBytePtr(dataRef);
-
-    img->width       = CGImageGetWidth(imgRef);
-    img->height      = CGImageGetHeight(imgRef);
-    img->row_pitch   = CGImageGetBytesPerRow(imgRef);
-    img->pixel_pitch = CGImageGetBitsPerPixel(imgRef) / 8;
-
-    CFRelease(imgRef);
+    img->data        = (uint8_t *)CVPixelBufferGetBaseAddress(pixelBuffer);
+    img->width       = CVPixelBufferGetWidth(pixelBuffer);
+    img->height      = CVPixelBufferGetHeight(pixelBuffer);
+    img->row_pitch   = CVPixelBufferGetBytesPerRow(pixelBuffer);
+    img->pixel_pitch = img->row_pitch / img->width;
 
     return 0;
   }

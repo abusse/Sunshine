@@ -7,12 +7,13 @@
 
 #define kMaxDisplays 32
 
+@property(nonatomic, assign) CGDirectDisplayID displayID;
 @property(nonatomic, assign) CMTime minFrameDuration;
 @property(nonatomic, assign) int frameWidth;
 @property(nonatomic, assign) int frameHeight;
 @property(atomic, assign) bool capture;
 
-typedef bool (^frameCallbackBlock)(CGImageRef);
+typedef bool (^frameCallbackBlock)(CMSampleBufferRef);
 @property(nonatomic, copy) frameCallbackBlock frameCallback;
 
 @property(nonatomic, assign) AVCaptureSession *session;
@@ -24,6 +25,7 @@ typedef bool (^frameCallbackBlock)(CGImageRef);
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate;
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate width:(int)width height:(int)height;
 
+- (CVPixelBufferRef)screenshot;
 - (bool)capture:(frameCallbackBlock)frameCallback;
 
 @end

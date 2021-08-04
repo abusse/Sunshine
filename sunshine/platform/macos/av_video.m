@@ -35,6 +35,7 @@
 
   self.capture = false;
 
+  self.displayID        = displayID;
   self.frameWidth       = width;
   self.frameHeight      = height;
   self.minFrameDuration = CMTimeMake(1, frameRate);
@@ -66,6 +67,10 @@
     [movieOutput setVideoSettings:@{
       (NSString *)kCVPixelBufferPixelFormatTypeKey: [NSNumber numberWithUnsignedInt:kCVPixelFormatType_32BGRA]
     }];
+
+    CGImageRef screenshot = CGDisplayCreateImage(self.displayID);
+    self.frameHeight      = CGImageGetHeight(screenshot);
+    self.frameWidth       = CGImageGetWidth(screenshot);
   }
 
   dispatch_queue_attr_t qos       = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, DISPATCH_QUEUE_PRIORITY_HIGH);
@@ -92,6 +97,43 @@
   [super dealloc];
 }
 
+- (CVPixelBufferRef)screenshot {
+  CGImageRef screenshot = CGDisplayCreateImage(self.displayID);
+
+  CGSize frameSize             = CGSizeMake((CGFloat)self.frameWidth, (CGFloat)self.frameHeight);
+  NSDictionary *options        = [NSDictionary dictionaryWithObjectsAndKeys:
+                                          [NSNumber numberWithBool:YES], kCVPixelBufferCGImageCompatibilityKey,
+                                        [NSNumber numberWithBool:YES], kCVPixelBufferCGBitmapContextCompatibilityKey,
+                                        nil];
+  CVPixelBufferRef pixelBuffer = NULL;
+
+  CVReturn status = CVPixelBufferCreate(kCFAllocatorDefault, frameSize.width,
+    frameSize.height, kCVPixelFormatType_32ARGB, (CFDictionaryRef)options,
+    &pixelBuffer);
+
+  if(status != kCVReturnSuccess || pixelBuffer == NULL) {
+    return NULL;
+  }
+
+  CVPixelBufferLockBaseAddress(pixelBuffer, 0);
+
+  CGColorSpaceRef rgbColorSpace = CGColorSpaceCreateDeviceRGB();
+
+  CGContextRef context = CGBitmapContextCreate(
+    CVPixelBufferGetBaseAddress(pixelBuffer), frameSize.width, frameSize.height,
+    8, CVPixelBufferGetBytesPerRow(pixelBuffer),
+    rgbColorSpace,
+    (CGBitmapInfo)kCGBitmapByteOrder32Little |
+      kCGImageAlphaNoneSkipLast);
+
+
+  CGContextDrawImage(context, CGRectMake(0, 0, self.frameWidth, self.frameHeight), screenshot);
+  CGColorSpaceRelease(rgbColorSpace);
+  CGContextRelease(context);
+
+  return pixelBuffer;
+}
+
 - (bool)capture:(frameCallbackBlock)frameCallback {
   self.frameCallback = frameCallback;
   self.capture       = true;
@@ -105,27 +147,13 @@
   didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
          fromConnection:(AVCaptureConnection *)connection {
   if(connection == self.videoConnection && self.capture) {
-    CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
-    CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
-
-    void *baseAddr = CVPixelBufferGetBaseAddress(pixelBuffer);
-    size_t width   = CVPixelBufferGetWidth(pixelBuffer);
-    size_t height  = CVPixelBufferGetHeight(pixelBuffer);
-
-    CGContextRef cgContext = CGBitmapContextCreate(baseAddr, width, height, 8, CVPixelBufferGetBytesPerRow(pixelBuffer), CGColorSpaceCreateDeviceRGB(), kCGImageAlphaNoneSkipLast);
-
-    CGImageRef cgImage = CGBitmapContextCreateImage(cgContext);
-    if(!self.frameCallback(cgImage)) {
+    if(!self.frameCallback(sampleBuffer)) {
       [self.session stopRunning];
       // this ensures that we do not try to forward frames that
       // are eventually still queued for processing
       self.capture = false;
       [self.captureStopped broadcast];
     }
-
-    CFRelease(cgImage);
-    CGContextRelease(cgContext);
-    CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
   }
 }
 
