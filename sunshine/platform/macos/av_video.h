@@ -6,11 +6,16 @@
 @interface AVVideo : NSObject <AVCaptureVideoDataOutputSampleBufferDelegate>
 
 #define kMaxDisplays 32
+#define kPixelFormat kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
 
 @property(nonatomic, assign) CGDirectDisplayID displayID;
 @property(nonatomic, assign) CMTime minFrameDuration;
 @property(nonatomic, assign) int frameWidth;
 @property(nonatomic, assign) int frameHeight;
+@property(nonatomic, assign) int paddingLeft;
+@property(nonatomic, assign) int paddingRight;
+@property(nonatomic, assign) int paddingTop;
+@property(nonatomic, assign) int paddingBottom;
 @property(atomic, assign) bool capture;
 
 typedef bool (^frameCallbackBlock)(CMSampleBufferRef);
@@ -23,9 +28,8 @@ typedef bool (^frameCallbackBlock)(CMSampleBufferRef);
 + (NSArray<NSDictionary *> *)displayNames;
 
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate;
-- (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate width:(int)width height:(int)height;
 
-- (CVPixelBufferRef)screenshot;
+- (void)setFrameWidth:(int)frameWidth frameHeight:(int)frameHeight;
 - (bool)capture:(frameCallbackBlock)frameCallback;
 
 @end

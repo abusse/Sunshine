@@ -27,23 +27,54 @@
 }
 
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate {
-  return [self initWithDisplay:displayID frameRate:frameRate width:0 height:0];
-}
-
-- (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate width:(int)width height:(int)height {
   self = [super init];
 
   self.capture = false;
 
   self.displayID        = displayID;
-  self.frameWidth       = width;
-  self.frameHeight      = height;
+  self.frameWidth       = 1920;
+  self.frameHeight      = 1080;
   self.minFrameDuration = CMTimeMake(1, frameRate);
   self.captureStopped   = [[NSCondition alloc] init];
 
+  return self;
+}
+
+- (void)dealloc {
+  self.videoConnection = nil;
+  [self.session stopRunning];
+  [super dealloc];
+}
+
+- (void)setFrameWidth:(int)frameWidth frameHeight:(int)frameHeight {
+  CGImageRef screenshot = CGDisplayCreateImage(self.displayID);
+
+  self.frameWidth  = frameWidth;
+  self.frameHeight = frameHeight;
+
+  double screenRatio = (double)CGImageGetWidth(screenshot) / (double)CGImageGetHeight(screenshot);
+  double streamRatio = (double)frameWidth / (double)frameHeight;
+
+  if(screenRatio < streamRatio) {
+    int padding        = frameWidth - (frameHeight * screenRatio);
+    self.paddingLeft   = padding / 2;
+    self.paddingRight  = padding - self.paddingLeft;
+    self.paddingTop    = 0;
+    self.paddingBottom = 0;
+  }
+  else {
+    int padding        = frameHeight - (frameWidth / screenRatio);
+    self.paddingLeft   = 0;
+    self.paddingRight  = 0;
+    self.paddingTop    = padding / 2;
+    self.paddingBottom = padding - self.paddingTop;
+  }
+}
+
+- (bool)capture:(frameCallbackBlock)frameCallback {
   self.session = [[AVCaptureSession alloc] init];
 
-  AVCaptureScreenInput *screenInput = [[AVCaptureScreenInput alloc] initWithDisplayID:displayID];
+  AVCaptureScreenInput *screenInput = [[AVCaptureScreenInput alloc] initWithDisplayID:self.displayID];
   [screenInput setMinFrameDuration:self.minFrameDuration];
 
   if([self.session canAddInput:screenInput]) {
@@ -56,22 +87,17 @@
 
   AVCaptureVideoDataOutput *movieOutput = [[AVCaptureVideoDataOutput alloc] init];
 
-  if(self.frameWidth > 0 && self.frameWidth > 0) {
-    [movieOutput setVideoSettings:@{
-      (NSString *)kCVPixelBufferPixelFormatTypeKey: [NSNumber numberWithUnsignedInt:kCVPixelFormatType_32BGRA],
-      (NSString *)kCVPixelBufferWidthKey: [NSNumber numberWithInt:self.frameWidth],
-      (NSString *)kCVPixelBufferHeightKey: [NSNumber numberWithInt:self.frameHeight]
-    }];
-  }
-  else {
-    [movieOutput setVideoSettings:@{
-      (NSString *)kCVPixelBufferPixelFormatTypeKey: [NSNumber numberWithUnsignedInt:kCVPixelFormatType_32BGRA]
-    }];
 
-    CGImageRef screenshot = CGDisplayCreateImage(self.displayID);
-    self.frameHeight      = CGImageGetHeight(screenshot);
-    self.frameWidth       = CGImageGetWidth(screenshot);
-  }
+  [movieOutput setVideoSettings:@{
+    (NSString *)kCVPixelBufferPixelFormatTypeKey: [NSNumber numberWithUnsignedInt:kPixelFormat],
+    (NSString *)kCVPixelBufferWidthKey: [NSNumber numberWithInt:self.frameWidth],
+    (NSString *)kCVPixelBufferExtendedPixelsRightKey: [NSNumber numberWithInt:self.paddingRight],
+    (NSString *)kCVPixelBufferExtendedPixelsLeftKey: [NSNumber numberWithInt:self.paddingLeft],
+    (NSString *)kCVPixelBufferExtendedPixelsTopKey: [NSNumber numberWithInt:self.paddingTop],
+    (NSString *)kCVPixelBufferExtendedPixelsBottomKey: [NSNumber numberWithInt:self.paddingBottom],
+    (NSString *)kCVPixelBufferHeightKey: [NSNumber numberWithInt:self.frameHeight]
+  }];
+
 
   dispatch_queue_attr_t qos       = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, DISPATCH_QUEUE_PRIORITY_HIGH);
   dispatch_queue_t recordingQueue = dispatch_queue_create("videoCaptureQueue", qos);
@@ -88,53 +114,6 @@
 
   self.videoConnection = [movieOutput connectionWithMediaType:AVMediaTypeVideo];
 
-  return self;
-}
-
-- (void)dealloc {
-  self.videoConnection = nil;
-  [self.session stopRunning];
-  [super dealloc];
-}
-
-- (CVPixelBufferRef)screenshot {
-  CGImageRef screenshot = CGDisplayCreateImage(self.displayID);
-
-  CGSize frameSize             = CGSizeMake((CGFloat)self.frameWidth, (CGFloat)self.frameHeight);
-  NSDictionary *options        = [NSDictionary dictionaryWithObjectsAndKeys:
-                                          [NSNumber numberWithBool:YES], kCVPixelBufferCGImageCompatibilityKey,
-                                        [NSNumber numberWithBool:YES], kCVPixelBufferCGBitmapContextCompatibilityKey,
-                                        nil];
-  CVPixelBufferRef pixelBuffer = NULL;
-
-  CVReturn status = CVPixelBufferCreate(kCFAllocatorDefault, frameSize.width,
-    frameSize.height, kCVPixelFormatType_32ARGB, (CFDictionaryRef)options,
-    &pixelBuffer);
-
-  if(status != kCVReturnSuccess || pixelBuffer == NULL) {
-    return NULL;
-  }
-
-  CVPixelBufferLockBaseAddress(pixelBuffer, 0);
-
-  CGColorSpaceRef rgbColorSpace = CGColorSpaceCreateDeviceRGB();
-
-  CGContextRef context = CGBitmapContextCreate(
-    CVPixelBufferGetBaseAddress(pixelBuffer), frameSize.width, frameSize.height,
-    8, CVPixelBufferGetBytesPerRow(pixelBuffer),
-    rgbColorSpace,
-    (CGBitmapInfo)kCGBitmapByteOrder32Little |
-      kCGImageAlphaNoneSkipLast);
-
-
-  CGContextDrawImage(context, CGRectMake(0, 0, self.frameWidth, self.frameHeight), screenshot);
-  CGColorSpaceRelease(rgbColorSpace);
-  CGContextRelease(context);
-
-  return pixelBuffer;
-}
-
-- (bool)capture:(frameCallbackBlock)frameCallback {
   self.frameCallback = frameCallback;
   self.capture       = true;
 

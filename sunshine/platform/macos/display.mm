@@ -1,5 +1,7 @@
 #include "sunshine/platform/common.h"
+#include "sunshine/platform/macos/av_img_t.h"
 #include "sunshine/platform/macos/av_video.h"
+#include "sunshine/platform/macos/nv12_zero_device.h"
 
 #include "sunshine/config.h"
 #include "sunshine/main.h"
@@ -9,41 +11,36 @@ namespace fs = std::filesystem;
 namespace platf {
 using namespace std::literals;
 
-struct avdisplay_img_t : public img_t {
-  // We have to retain the DataRef to an image for the image buffer
-  // and release it when the image buffer is no longer needed
-  // XXX: this should be replaced by a smart pointer with CFRelease as custom deallocator
-  CVPixelBufferRef pixelBuffer   = nullptr;
-  CMSampleBufferRef sampleBuffer = nullptr;
-  bool isPooled                  = false;
 
-  ~avdisplay_img_t() override {
-    if(pixelBuffer != NULL) {
-      CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
-      if(!isPooled) {
-        CFRelease(pixelBuffer);
-      }
+av_img_t::~av_img_t() {
+  if(pixelBuffer != NULL) {
+    CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
+    if(!isPooled) {
+      CFRelease(pixelBuffer);
     }
-
-    if(sampleBuffer != nullptr) {
-      CFRelease(sampleBuffer);
-    }
-    data = nullptr;
   }
-};
 
-struct avdisplay_attr_t : public display_t {
+  if(sampleBuffer != nullptr) {
+    CFRelease(sampleBuffer);
+  }
+  data = nullptr;
+}
+
+
+struct av_display_t : public display_t {
   AVVideo *display;
   CGDirectDisplayID display_id;
 
-  ~avdisplay_attr_t() {
+  ~av_display_t() {
     [display release];
   }
 
   capture_e capture(snapshot_cb_t &&snapshot_cb, std::shared_ptr<img_t> img, bool *cursor) override {
-    __block auto next_img = std::move(img);
+    __block auto img_next = std::move(img);
 
     [display capture:^(CMSampleBufferRef sampleBuffer) {
+      auto av_img_next = std::static_pointer_cast<av_img_t>(img_next);
+
       CFRetain(sampleBuffer);
 
       CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
@@ -51,26 +48,29 @@ struct avdisplay_attr_t : public display_t {
 
       // XXX: next_img->img should be moved to a smart pointer with
       // the CFRelease as custon deallocator
-      if((std::static_pointer_cast<avdisplay_img_t>(next_img))->pixelBuffer != nullptr)
-        CVPixelBufferUnlockBaseAddress((std::static_pointer_cast<avdisplay_img_t>(next_img))->pixelBuffer, kCVPixelBufferLock_ReadOnly);
+      if(av_img_next->pixelBuffer != nullptr)
+        CVPixelBufferUnlockBaseAddress(av_img_next->pixelBuffer, 0);
 
-      if((std::static_pointer_cast<avdisplay_img_t>(next_img))->sampleBuffer != nullptr)
-        CFRelease((std::static_pointer_cast<avdisplay_img_t>(next_img))->sampleBuffer);
+      if(av_img_next->sampleBuffer != nullptr)
+        CFRelease(av_img_next->sampleBuffer);
 
 
-      (std::static_pointer_cast<avdisplay_img_t>(next_img))->sampleBuffer = sampleBuffer;
-      (std::static_pointer_cast<avdisplay_img_t>(next_img))->pixelBuffer  = pixelBuffer;
-      (std::static_pointer_cast<avdisplay_img_t>(next_img))->isPooled     = true;
-      next_img->data                                                      = (uint8_t *)CVPixelBufferGetBaseAddress(pixelBuffer);
+      av_img_next->sampleBuffer = sampleBuffer;
+      av_img_next->pixelBuffer  = pixelBuffer;
+      av_img_next->isPooled     = true;
+      img_next->data            = (uint8_t *)CVPixelBufferGetBaseAddress(pixelBuffer);
 
-      next_img->width       = CVPixelBufferGetWidth(pixelBuffer);
-      next_img->height      = CVPixelBufferGetHeight(pixelBuffer);
-      next_img->row_pitch   = CVPixelBufferGetBytesPerRow(pixelBuffer);
-      next_img->pixel_pitch = next_img->row_pitch / next_img->width;
+      size_t extraPixels[4];
+      CVPixelBufferGetExtendedPixels(pixelBuffer, &extraPixels[0], &extraPixels[1], &extraPixels[2], &extraPixels[3]);
 
-      next_img = snapshot_cb(next_img);
+      img_next->width       = CVPixelBufferGetWidth(pixelBuffer) + extraPixels[0] + extraPixels[1];
+      img_next->height      = CVPixelBufferGetHeight(pixelBuffer) + extraPixels[2] + extraPixels[3];
+      img_next->row_pitch   = CVPixelBufferGetBytesPerRow(pixelBuffer);
+      img_next->pixel_pitch = img_next->row_pitch / img_next->width;
 
-      return next_img != nullptr;
+      img_next = snapshot_cb(img_next);
+
+      return img_next != nullptr;
     }];
 
     [display.captureStopped wait];
@@ -79,43 +79,80 @@ struct avdisplay_attr_t : public display_t {
   }
 
   std::shared_ptr<img_t> alloc_img() override {
-    return std::make_shared<avdisplay_img_t>();
+    return std::make_shared<av_img_t>();
+  }
+
+  std::shared_ptr<hwdevice_t> make_hwdevice(pix_fmt_e pix_fmt) override {
+    if(pix_fmt != pix_fmt_e::nv12) {
+      BOOST_LOG(error) << "Unsupported Pixel Format. MacOS currently only supports NV12"sv;
+      return nullptr;
+    }
+
+    auto device = std::make_shared<nv12_zero_device>();
+
+    device->init(static_cast<void *>(display), setResolution);
+
+    return device;
   }
 
   int dummy_img(img_t *img) override {
-    auto pixelBuffer = [display screenshot];
+    [display capture:^(CMSampleBufferRef sampleBuffer) {
+      auto av_img = (av_img_t *)img;
 
-    if(!pixelBuffer)
-      return -1;
+      CFRetain(sampleBuffer);
 
-    ((avdisplay_img_t *)img)->pixelBuffer = pixelBuffer;
+      CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+      CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
 
-    img->data        = (uint8_t *)CVPixelBufferGetBaseAddress(pixelBuffer);
-    img->width       = CVPixelBufferGetWidth(pixelBuffer);
-    img->height      = CVPixelBufferGetHeight(pixelBuffer);
-    img->row_pitch   = CVPixelBufferGetBytesPerRow(pixelBuffer);
-    img->pixel_pitch = img->row_pitch / img->width;
+      // XXX: next_img->img should be moved to a smart pointer with
+      // the CFRelease as custon deallocator
+      if(av_img->pixelBuffer != nullptr)
+        CVPixelBufferUnlockBaseAddress(((av_img_t *)img)->pixelBuffer, 0);
+
+      if(av_img->sampleBuffer != nullptr)
+        CFRelease(av_img->sampleBuffer);
+
+
+      av_img->sampleBuffer = sampleBuffer;
+      av_img->pixelBuffer  = pixelBuffer;
+      av_img->isPooled     = true;
+      img->data            = (uint8_t *)CVPixelBufferGetBaseAddress(pixelBuffer);
+
+      size_t extraPixels[4];
+      CVPixelBufferGetExtendedPixels(pixelBuffer, &extraPixels[0], &extraPixels[1], &extraPixels[2], &extraPixels[3]);
+
+      img->width       = CVPixelBufferGetWidth(pixelBuffer) + extraPixels[0] + extraPixels[1];
+      img->height      = CVPixelBufferGetHeight(pixelBuffer) + extraPixels[2] + extraPixels[3];
+      img->row_pitch   = CVPixelBufferGetBytesPerRow(pixelBuffer);
+      img->pixel_pitch = img->row_pitch / img->width;
+
+      return false;
+    }];
+
+    [display.captureStopped wait];
 
     return 0;
+  }
+
+  /**
+   * A bridge from the pure C++ code of the hwdevice_t class to the pure Objective C code.
+   *
+   * display --> an opaque pointer to an object of this class
+   * width --> the intended capture width
+   * height --> the intended capture height
+   */
+  static void setResolution(void *display, int width, int height) {
+    [static_cast<AVVideo *>(display) setFrameWidth:width frameHeight:height];
   }
 };
 
 std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type, const std::string &display_name, int framerate) {
-  if(hwdevice_type != platf::mem_type_e::system && hwdevice_type != platf::mem_type_e::videotoolbox) {
+  if(hwdevice_type != platf::mem_type_e::system) {
     BOOST_LOG(error) << "Could not initialize display with the given hw device type."sv;
     return nullptr;
   }
 
-  auto result = std::make_shared<avdisplay_attr_t>();
-
-  int capture_width  = 0;
-  int capture_height = 0;
-
-  if(config::video.sw.width.has_value() && config::video.sw.height.has_value()) {
-    capture_width  = config::video.sw.width.value();
-    capture_height = config::video.sw.height.value();
-    BOOST_LOG(info) << "Capturing with "sv << capture_width << "x"sv << capture_height;
-  }
+  auto result = std::make_shared<av_display_t>();
 
   result->display_id = CGMainDisplayID();
   if(!display_name.empty()) {
@@ -130,7 +167,7 @@ std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type, const std::s
     }
   }
 
-  result->display = [[AVVideo alloc] initWithDisplay:result->display_id frameRate:framerate width:capture_width height:capture_height];
+  result->display = [[AVVideo alloc] initWithDisplay:result->display_id frameRate:framerate];
 
   if(!result->display) {
     BOOST_LOG(error) << "Video setup failed."sv;
@@ -138,14 +175,8 @@ std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type, const std::s
   }
 
   auto tmp_image = result->alloc_img();
-  if(result->dummy_img(tmp_image.get())) {
-    result->width  = capture_width;
-    result->height = capture_height;
-  }
-  else {
-    result->width  = tmp_image->width;
-    result->height = tmp_image->height;
-  }
+  result->width  = tmp_image->width;
+  result->height = tmp_image->height;
 
   return result;
 }

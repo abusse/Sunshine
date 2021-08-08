@@ -140,6 +140,7 @@ elseif(APPLE)
 	set(PLATFORM_TARGET_FILES
 		sunshine/platform/macos/av_audio.h
 		sunshine/platform/macos/av_audio.m
+		sunshine/platform/macos/av_img_t.h
 		sunshine/platform/macos/av_video.h
 		sunshine/platform/macos/av_video.m
 		sunshine/platform/macos/display.mm
@@ -147,6 +148,8 @@ elseif(APPLE)
 		sunshine/platform/macos/microphone.mm
 		sunshine/platform/macos/misc.cpp
 		sunshine/platform/macos/misc.h
+		sunshine/platform/macos/nv12_zero_device.cpp
+		sunshine/platform/macos/nv12_zero_device.h
 		sunshine/platform/macos/publish.cpp
 		sunshine/platform/macos/TPCircularBuffer/TPCircularBuffer.c
 		sunshine/platform/macos/TPCircularBuffer/TPCircularBuffer.h
