@@ -14,8 +14,6 @@ struct av_img_t : public img_t {
   // XXX: this should be replaced by a smart pointer with CFRelease as custom deallocator
   CVPixelBufferRef pixelBuffer   = nullptr;
   CMSampleBufferRef sampleBuffer = nullptr;
-  int extraPixels[4]             = { 0, 0, 0, 0 };
-  bool isPooled                  = false;
 
   ~av_img_t();
 };

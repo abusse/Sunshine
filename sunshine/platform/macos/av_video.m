@@ -8,13 +8,13 @@
 // However, there is a solution with little external code that can be used:
 // https://stackoverflow.com/questions/20025868/cgdisplayioserviceport-is-deprecated-in-os-x-10-9-how-to-replace
 + (NSArray<NSDictionary *> *)displayNames {
-  NSMutableArray *result = [[NSMutableArray alloc] init];
-
   CGDirectDisplayID displays[kMaxDisplays];
   uint32_t count;
   if(CGGetActiveDisplayList(kMaxDisplays, displays, &count) != kCGErrorSuccess) {
-    return result;
+    return [NSArray array];
   }
+
+  NSMutableArray *result = [NSMutableArray array];
 
   for(uint32_t i = 0; i < count; i++) {
     [result addObject:@{
@@ -23,7 +23,7 @@
     }];
   }
 
-  return result;
+  return [NSArray arrayWithArray:result];
 }
 
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate {
@@ -40,12 +40,12 @@
   self.paddingTop       = 0;
   self.paddingBottom    = 0;
   self.minFrameDuration = CMTimeMake(1, frameRate);
-
-  self.session = [[AVCaptureSession alloc] init];
-
+  self.session          = [[AVCaptureSession alloc] init];
   self.videoOutputs     = [[NSMapTable alloc] init];
   self.captureCallbacks = [[NSMapTable alloc] init];
   self.captureSignals   = [[NSMapTable alloc] init];
+
+  CFRelease(screenshot);
 
   AVCaptureScreenInput *screenInput = [[AVCaptureScreenInput alloc] initWithDisplayID:self.displayID];
   [screenInput setMinFrameDuration:self.minFrameDuration];
@@ -64,6 +64,9 @@
 }
 
 - (void)dealloc {
+  [self.videoOutputs release];
+  [self.captureCallbacks release];
+  [self.captureSignals release];
   [self.session stopRunning];
   [super dealloc];
 }
@@ -76,6 +79,8 @@
 
   double screenRatio = (double)CGImageGetWidth(screenshot) / (double)CGImageGetHeight(screenshot);
   double streamRatio = (double)frameWidth / (double)frameHeight;
+
+  CFRelease(screenshot);
 
   if(screenRatio < streamRatio) {
     int padding        = frameWidth - (frameHeight * screenRatio);
