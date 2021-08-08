@@ -817,7 +817,7 @@ int encode(int64_t frame_nr, session_t &session, frame_t::pointer frame, safe::m
 }
 
 std::optional<session_t> make_session(const encoder_t &encoder, const config_t &config, int width, int height, platf::hwdevice_t *hwdevice) {
-  bool hardware = (encoder.dev_type != AV_HWDEVICE_TYPE_NONE) && (encoder.dev_type != AV_HWDEVICE_TYPE_VIDEOTOOLBOX);
+  bool hardware = encoder.dev_type != AV_HWDEVICE_TYPE_NONE;
 
   auto &video_format = config.videoFormat == 0 ? encoder.h264 : encoder.hevc;
   if(!video_format[encoder_t::PASSED]) {

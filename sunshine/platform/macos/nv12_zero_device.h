@@ -15,9 +15,9 @@ public:
   // call directly because of namespace collisions between AVFoundation and FFMPEG
   using resolution_fn_t = std::function<void(void *display, int width, int height)>;
   resolution_fn_t resolution_fn;
+  using pixel_format_fn_t = std::function<void(void *display, int pixelFormat)>;
 
-
-  int init(void *display, resolution_fn_t resolution_fn);
+  int init(void *display, resolution_fn_t resolution_fn, pixel_format_fn_t pixel_format_fn);
 
   int convert(img_t &img);
   int set_frame(AVFrame *frame);

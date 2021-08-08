@@ -690,8 +690,6 @@ void apply_config(std::unordered_map<std::string, std::string> &&vars) {
   int_between_f(vars, "hevc_mode", video.hevc_mode, { 0, 3 });
   string_f(vars, "sw_preset", video.sw.preset);
   string_f(vars, "sw_tune", video.sw.tune);
-  int_f(vars, "sw_width", video.sw.width);
-  int_f(vars, "sw_height", video.sw.height);
   int_f(vars, "nv_preset", video.nv.preset, nv::preset_from_view);
   int_f(vars, "nv_rc", video.nv.rc, nv::rc_from_view);
   int_f(vars, "nv_coder", video.nv.coder, nv::coder_from_view);

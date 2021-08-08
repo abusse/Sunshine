@@ -13,9 +13,7 @@ void free_frame(AVFrame *frame) {
   av_frame_free(&frame);
 }
 
-using frame_t = util::safe_ptr<AVFrame, free_frame>;
-
-frame_t av_frame;
+util::safe_ptr<AVFrame, free_frame> av_frame;
 
 int nv12_zero_device::convert(platf::img_t &img) {
   av_frame_make_writable(av_frame.get());
@@ -68,7 +66,9 @@ int nv12_zero_device::set_frame(AVFrame *frame) {
 void nv12_zero_device::set_colorspace(std::uint32_t colorspace, std::uint32_t color_range) {
 }
 
-int nv12_zero_device::init(void *display, resolution_fn_t resolution_fn) {
+int nv12_zero_device::init(void *display, resolution_fn_t resolution_fn, pixel_format_fn_t pixel_format_fn) {
+  pixel_format_fn(display, '420v');
+
   this->display       = display;
   this->resolution_fn = resolution_fn;
 

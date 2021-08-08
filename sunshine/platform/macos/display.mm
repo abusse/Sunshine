@@ -11,7 +11,6 @@ namespace fs = std::filesystem;
 namespace platf {
 using namespace std::literals;
 
-
 av_img_t::~av_img_t() {
   if(pixelBuffer != NULL) {
     CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
@@ -26,7 +25,6 @@ av_img_t::~av_img_t() {
   data = nullptr;
 }
 
-
 struct av_display_t : public display_t {
   AVVideo *display;
   CGDirectDisplayID display_id;
@@ -38,7 +36,7 @@ struct av_display_t : public display_t {
   capture_e capture(snapshot_cb_t &&snapshot_cb, std::shared_ptr<img_t> img, bool *cursor) override {
     __block auto img_next = std::move(img);
 
-    [display capture:^(CMSampleBufferRef sampleBuffer) {
+    auto signal = [display capture:^(CMSampleBufferRef sampleBuffer) {
       auto av_img_next = std::static_pointer_cast<av_img_t>(img_next);
 
       CFRetain(sampleBuffer);
@@ -53,7 +51,6 @@ struct av_display_t : public display_t {
 
       if(av_img_next->sampleBuffer != nullptr)
         CFRelease(av_img_next->sampleBuffer);
-
 
       av_img_next->sampleBuffer = sampleBuffer;
       av_img_next->pixelBuffer  = pixelBuffer;
@@ -73,7 +70,7 @@ struct av_display_t : public display_t {
       return img_next != nullptr;
     }];
 
-    [display.captureStopped wait];
+    [signal wait];
 
     return capture_e::ok;
   }
@@ -83,20 +80,26 @@ struct av_display_t : public display_t {
   }
 
   std::shared_ptr<hwdevice_t> make_hwdevice(pix_fmt_e pix_fmt) override {
-    if(pix_fmt != pix_fmt_e::nv12) {
-      BOOST_LOG(error) << "Unsupported Pixel Format. MacOS currently only supports NV12"sv;
+    if(pix_fmt == pix_fmt_e::yuv420p) {
+      display.pixelFormat = kCVPixelFormatType_32BGRA;
+
+      return std::make_shared<hwdevice_t>();
+    }
+    else if(pix_fmt == pix_fmt_e::nv12) {
+      auto device = std::make_shared<nv12_zero_device>();
+
+      device->init(static_cast<void *>(display), setResolution, setPixelFormat);
+
+      return device;
+    }
+    else {
+      BOOST_LOG(error) << "Unsupported Pixel Format."sv;
       return nullptr;
     }
-
-    auto device = std::make_shared<nv12_zero_device>();
-
-    device->init(static_cast<void *>(display), setResolution);
-
-    return device;
   }
 
   int dummy_img(img_t *img) override {
-    [display capture:^(CMSampleBufferRef sampleBuffer) {
+    auto signal = [display capture:^(CMSampleBufferRef sampleBuffer) {
       auto av_img = (av_img_t *)img;
 
       CFRetain(sampleBuffer);
@@ -129,7 +132,7 @@ struct av_display_t : public display_t {
       return false;
     }];
 
-    [display.captureStopped wait];
+    [signal wait];
 
     return 0;
   }
@@ -143,6 +146,10 @@ struct av_display_t : public display_t {
    */
   static void setResolution(void *display, int width, int height) {
     [static_cast<AVVideo *>(display) setFrameWidth:width frameHeight:height];
+  }
+
+  static void setPixelFormat(void *display, OSType pixelFormat) {
+    static_cast<AVVideo *>(display).pixelFormat = pixelFormat;
   }
 };
 
@@ -175,6 +182,10 @@ std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type, const std::s
   }
 
   auto tmp_image = result->alloc_img();
+  if(result->dummy_img(tmp_image.get())) {
+    BOOST_LOG(error) << "Failed to capture initial frame"sv;
+    return nullptr;
+  }
   result->width  = tmp_image->width;
   result->height = tmp_image->height;
 

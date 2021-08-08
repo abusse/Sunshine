@@ -19,8 +19,6 @@ struct video_t {
   struct {
     std::string preset;
     std::string tune;
-    std::optional<int> width;
-    std::optional<int> height;
   } sw;
 
   struct {
