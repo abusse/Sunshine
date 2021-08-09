@@ -102,7 +102,7 @@ If cmake fails complaining to find Boost, try to set the path explicitly: `cmake
 
 ### Requirements:
 
-	mingw-w64-x86_64-openssl mingw-w64-x86_64-cmake mingw-w64-x86_64-toolchain mingw-w64-x86_64-opus mingw-w64-x86_64-x265 mingw-w64-x86_64-boost git mingw-w64-x86_64-make
+	mingw-w64-x86_64-openssl mingw-w64-x86_64-cmake mingw-w64-x86_64-toolchain mingw-w64-x86_64-opus mingw-w64-x86_64-x265 mingw-w64-x86_64-boost git mingw-w64-x86_64-make cmake make gcc
 
 ### Compilation:
 - `git clone https://github.com/loki-47-6F-64/sunshine.git --recursive`
