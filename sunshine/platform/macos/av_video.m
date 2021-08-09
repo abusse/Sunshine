@@ -80,8 +80,6 @@
   double screenRatio = (double)CGImageGetWidth(screenshot) / (double)CGImageGetHeight(screenshot);
   double streamRatio = (double)frameWidth / (double)frameHeight;
 
-  CFRelease(screenshot);
-
   if(screenRatio < streamRatio) {
     int padding        = frameWidth - (frameHeight * screenRatio);
     self.paddingLeft   = padding / 2;
@@ -96,6 +94,26 @@
     self.paddingTop    = padding / 2;
     self.paddingBottom = padding - self.paddingTop;
   }
+  
+  // XXX: if the streamed image is larger than the natie resolution, we add a black box around
+  // the frame. Instead the frame should be resized entirely.
+  int delta_width = frameWidth - (CGImageGetWidth(screenshot) + self.paddingLeft + self.paddingRight);
+  if (delta_width > 0) {
+    int adjust_left = delta_width/2;
+    int adjust_right = delta_width - adjust_left;
+    self.paddingLeft += adjust_left;
+    self.paddingRight += adjust_right;
+  }
+  
+  int delta_height = frameHeight - (CGImageGetHeight(screenshot) + self.paddingTop + self.paddingBottom);
+  if (delta_height > 0) {
+    int adjust_top = delta_height/2;
+    int adjust_bottom = delta_height - adjust_top;
+    self.paddingTop += adjust_top;
+    self.paddingBottom += adjust_bottom;
+  }
+  
+  CFRelease(screenshot);
 }
 
 - (NSCondition *)capture:(FrameCallbackBlock)frameCallback {

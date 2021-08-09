@@ -38,7 +38,7 @@ int nv12_zero_device::convert(platf::img_t &img) {
   size_t uv_plane_height = CVPixelBufferGetHeightOfPlane(av_img->pixelBuffer, 1);
 
   if(left_pad || right_pad) {
-    for(int l = 0; l < uv_plane_height; l++) {
+    for(int l = 0; l < uv_plane_height + (top_pad/2); l++) {
       int line = l * av_frame->linesize[1];
       memset((void *)&av_frame->data[1][line], 128, (size_t)left_pad);
       memset((void *)&av_frame->data[1][line + img.width - right_pad], 128, right_pad);
