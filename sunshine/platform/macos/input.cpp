@@ -7,9 +7,10 @@
 namespace platf {
 using namespace std::literals;
 
-struct input_raw_t {
+struct macos_input_t {
 public:
   CGEventFlags kb_flags;
+  bool mouse_down[3];
   CGDirectDisplayID display;
 };
 
@@ -24,6 +25,7 @@ bool operator<(const KeyCodeMap &a, const KeyCodeMap &b) {
   return a.winKeycode < b.winKeycode;
 }
 
+// clang-format off
 const KeyCodeMap kKeyCodesMap[] = {
   { 0x08 /* VKEY_BACK */,                      kVK_Delete              },
   { 0x09 /* VKEY_TAB */,                       kVK_Tab                 },
@@ -193,6 +195,7 @@ const KeyCodeMap kKeyCodesMap[] = {
   { 0xFD /* VKEY_PA1 */,                       -1                      },
   { 0xFE /* VKEY_OEM_CLEAR */,                 kVK_ANSI_KeypadClear    }
 };
+// clang-format on
 
 int keysym(int keycode) {
   KeyCodeMap from;
@@ -218,29 +221,32 @@ void keyboard(input_t &input, uint16_t modcode, bool release) {
     return;
   }
 
-  auto keyboard = ((input_raw_t *)input.get());
+  auto macos_input = ((macos_input_t *)input.get());
 
   switch(key) {
   case kVK_Shift:
-    keyboard->kb_flags = release ? keyboard->kb_flags & ~kCGEventFlagMaskShift : keyboard->kb_flags | kCGEventFlagMaskShift;
+  case kVK_RightShift:
+    macos_input->kb_flags = release ? macos_input->kb_flags & ~kCGEventFlagMaskShift : macos_input->kb_flags | kCGEventFlagMaskShift;
     return;
-
   case kVK_Command:
-    keyboard->kb_flags = release ? keyboard->kb_flags & ~kCGEventFlagMaskCommand : keyboard->kb_flags | kCGEventFlagMaskCommand;
+  case kVK_RightCommand:
+    macos_input->kb_flags = release ? macos_input->kb_flags & ~kCGEventFlagMaskCommand : macos_input->kb_flags | kCGEventFlagMaskCommand;
     return;
-
   case kVK_Option:
-    keyboard->kb_flags = release ? keyboard->kb_flags & ~kCGEventFlagMaskAlternate : keyboard->kb_flags | kCGEventFlagMaskAlternate;
+  case kVK_RightOption:
+    macos_input->kb_flags = release ? macos_input->kb_flags & ~kCGEventFlagMaskAlternate : macos_input->kb_flags | kCGEventFlagMaskAlternate;
+    return;
+  case kVK_Control:
+  case kVK_RightControl:
+    macos_input->kb_flags = release ? macos_input->kb_flags & ~kCGEventFlagMaskControl : macos_input->kb_flags | kCGEventFlagMaskControl;
     return;
   }
 
-
   CGEventSourceRef source    = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
   CGEventRef saveCommandDown = CGEventCreateKeyboardEvent(source, key, !release);
-  CGEventSetFlags(saveCommandDown, keyboard->kb_flags);
+  CGEventSetFlags(saveCommandDown, macos_input->kb_flags);
 
   CGEventPost(kCGAnnotatedSessionEventTap, saveCommandDown);
-
 
   CFRelease(saveCommandDown);
   CFRelease(source);
@@ -268,10 +274,10 @@ CGPoint get_mouse_loc() {
   return cursor;
 }
 
-void mouse_event(input_t &input, CGMouseButton button, CGEventType type, CGPoint location) {
+void post_mouse(input_t &input, CGMouseButton button, CGEventType type, CGPoint location) {
   BOOST_LOG(debug) << "mouse_event: "sv << button << ", type: "sv << type << ", location:"sv << location.x << ":"sv << location.y;
 
-  auto display = ((input_raw_t *)input.get())->display;
+  auto display = ((macos_input_t *)input.get())->display;
 
   if(location.x < 0)
     location.x = 0;
@@ -293,22 +299,43 @@ void mouse_event(input_t &input, CGMouseButton button, CGEventType type, CGPoint
   CGWarpMouseCursorPosition(location);
 }
 
+inline CGEventType event_type_mouse(input_t &input) {
+  auto macos_input = ((macos_input_t *)input.get());
+
+  if(macos_input->mouse_down[0]) {
+    return kCGEventLeftMouseDragged;
+  }
+  else if(macos_input->mouse_down[1]) {
+    return kCGEventOtherMouseDragged;
+  }
+  else if(macos_input->mouse_down[2]) {
+    return kCGEventRightMouseDragged;
+  }
+  else {
+    return kCGEventMouseMoved;
+  }
+}
+
 void move_mouse(input_t &input, int deltaX, int deltaY) {
   auto current = get_mouse_loc();
 
   CGPoint location = CGPointMake(current.x + deltaX, current.y + deltaY);
 
-  mouse_event(input, kCGMouseButtonLeft, kCGEventMouseMoved, location);
+  post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location);
 }
 
 void abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y) {
   CGPoint location = CGPointMake(x, y);
-  mouse_event(input, kCGMouseButtonLeft, kCGEventMouseMoved, location);
+
+  post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location);
 }
 
 void button_mouse(input_t &input, int button, bool release) {
   CGMouseButton macButton;
   CGEventType eventType;
+
+  auto mouse = ((macos_input_t *)input.get());
+
   switch(button) {
   case 1:
     macButton = kCGMouseButtonLeft;
@@ -327,7 +354,9 @@ void button_mouse(input_t &input, int button, bool release) {
     return;
   }
 
-  mouse_event(input, macButton, eventType, get_mouse_loc());
+  mouse->mouse_down[macButton] = !release;
+
+  post_mouse(input, macButton, eventType, get_mouse_loc());
 }
 
 void scroll(input_t &input, int high_res_distance) {
@@ -340,15 +369,18 @@ void scroll(input_t &input, int high_res_distance) {
 }
 
 input_t input() {
-  input_t result { new input_raw_t() };
+  input_t result { new macos_input_t() };
 
-  auto gp = (input_raw_t *)result.get();
+  auto macos_input = (macos_input_t *)result.get();
 
-  gp->kb_flags = 0;
+  macos_input->kb_flags      = 0;
+  macos_input->mouse_down[0] = false;
+  macos_input->mouse_down[1] = false;
+  macos_input->mouse_down[2] = false;
   // If we don't use the main display in the future, this has to be adapted
-  gp->display = CGMainDisplayID();
+  macos_input->display = CGMainDisplayID();
 
-  BOOST_LOG(debug) << "Display "sv << gp->display << ", pixel dimention: " << CGDisplayPixelsWide(gp->display) << "x"sv << CGDisplayPixelsHigh(gp->display);
+  BOOST_LOG(debug) << "Display "sv << macos_input->display << ", pixel dimention: " << CGDisplayPixelsWide(macos_input->display) << "x"sv << CGDisplayPixelsHigh(macos_input->display);
 
   return result;
 }
