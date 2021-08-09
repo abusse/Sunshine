@@ -43,7 +43,7 @@ struct av_display_t : public display_t {
       CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
 
       // XXX: next_img->img should be moved to a smart pointer with
-      // the CFRelease as custon deallocator
+      // the CFRelease as custom deallocator
       if(av_img_next->pixelBuffer != nullptr)
         CVPixelBufferUnlockBaseAddress(av_img_next->pixelBuffer, 0);
 
@@ -106,7 +106,7 @@ struct av_display_t : public display_t {
       CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
 
       // XXX: next_img->img should be moved to a smart pointer with
-      // the CFRelease as custon deallocator
+      // the CFRelease as custom deallocator
       if(av_img->pixelBuffer != nullptr)
         CVPixelBufferUnlockBaseAddress(((av_img_t *)img)->pixelBuffer, 0);
 

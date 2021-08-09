@@ -2,8 +2,8 @@
 
 @implementation AVVideo
 
-// XXX: Currenty, this function only returns the screen IDs as names,
-// which is not very helpfull to the user. The API to retrieve names
+// XXX: Currently, this function only returns the screen IDs as names,
+// which is not very helpful to the user. The API to retrieve names
 // was deprecated with 10.9+.
 // However, there is a solution with little external code that can be used:
 // https://stackoverflow.com/questions/20025868/cgdisplayioserviceport-is-deprecated-in-os-x-10-9-how-to-replace
@@ -94,25 +94,25 @@
     self.paddingTop    = padding / 2;
     self.paddingBottom = padding - self.paddingTop;
   }
-  
-  // XXX: if the streamed image is larger than the natie resolution, we add a black box around
+
+  // XXX: if the streamed image is larger than the native resolution, we add a black box around
   // the frame. Instead the frame should be resized entirely.
   int delta_width = frameWidth - (CGImageGetWidth(screenshot) + self.paddingLeft + self.paddingRight);
-  if (delta_width > 0) {
-    int adjust_left = delta_width/2;
+  if(delta_width > 0) {
+    int adjust_left  = delta_width / 2;
     int adjust_right = delta_width - adjust_left;
     self.paddingLeft += adjust_left;
     self.paddingRight += adjust_right;
   }
-  
+
   int delta_height = frameHeight - (CGImageGetHeight(screenshot) + self.paddingTop + self.paddingBottom);
-  if (delta_height > 0) {
-    int adjust_top = delta_height/2;
+  if(delta_height > 0) {
+    int adjust_top    = delta_height / 2;
     int adjust_bottom = delta_height - adjust_top;
     self.paddingTop += adjust_top;
     self.paddingBottom += adjust_bottom;
   }
-  
+
   CFRelease(screenshot);
 }
 

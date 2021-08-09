@@ -31,14 +31,14 @@ int nv12_zero_device::convert(platf::img_t &img) {
   // The luminance is 0, therefore, we simply need to set the chroma values to 128 for each pixel
   // for black bars (instead of green with chroma 0). However, this only works 100% correct, when
   // the resolution is devisable by 32. This could be improved by calculating the chroma values for
-  // the outer content pixels, which should intoduce only a minor performance hit.
+  // the outer content pixels, which should introduce only a minor performance hit.
   //
-  // XXX: Improve the algortihm to take into account the outer pixels
+  // XXX: Improve the algorithm to take into account the outer pixels
 
   size_t uv_plane_height = CVPixelBufferGetHeightOfPlane(av_img->pixelBuffer, 1);
 
   if(left_pad || right_pad) {
-    for(int l = 0; l < uv_plane_height + (top_pad/2); l++) {
+    for(int l = 0; l < uv_plane_height + (top_pad / 2); l++) {
       int line = l * av_frame->linesize[1];
       memset((void *)&av_frame->data[1][line], 128, (size_t)left_pad);
       memset((void *)&av_frame->data[1][line + img.width - right_pad], 128, right_pad);
@@ -72,7 +72,7 @@ int nv12_zero_device::init(void *display, resolution_fn_t resolution_fn, pixel_f
   this->display       = display;
   this->resolution_fn = resolution_fn;
 
-  // we never use this pointer but it's existance is checked/used
+  // we never use this pointer but it's existence is checked/used
   // by the platform independed code
   data = this;
 

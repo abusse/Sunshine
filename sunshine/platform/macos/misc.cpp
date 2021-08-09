@@ -11,14 +11,8 @@ using namespace std::literals;
 namespace fs = std::filesystem;
 
 namespace platf {
-using ifaddr_t = util::safe_ptr<ifaddrs, freeifaddrs>;
-
-ifaddr_t get_ifaddrs() {
-  ifaddrs *p { nullptr };
-
-  getifaddrs(&p);
-
-  return ifaddr_t { p };
+std::unique_ptr<deinit_t> init() {
+  return std::make_unique<deinit_t>();
 }
 
 fs::path appdata() {
@@ -28,6 +22,16 @@ fs::path appdata() {
   }
 
   return fs::path { homedir } / ".config/sunshine"sv;
+}
+
+using ifaddr_t = util::safe_ptr<ifaddrs, freeifaddrs>;
+
+ifaddr_t get_ifaddrs() {
+  ifaddrs *p { nullptr };
+
+  getifaddrs(&p);
+
+  return ifaddr_t { p };
 }
 
 std::string from_sockaddr(const sockaddr *const ip_addr) {

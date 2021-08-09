@@ -16,13 +16,13 @@ public:
 
 // A struct to hold a Windows keycode to Mac virtual keycode mapping.
 struct KeyCodeMap {
-  int winKeycode;
-  int macKeycode;
+  int win_keycode;
+  int mac_keycode;
 };
 
 // Customized less operator for using std::lower_bound() on a KeyCodeMap array.
 bool operator<(const KeyCodeMap &a, const KeyCodeMap &b) {
-  return a.winKeycode < b.winKeycode;
+  return a.win_keycode < b.win_keycode;
 }
 
 // clang-format off
@@ -198,18 +198,18 @@ const KeyCodeMap kKeyCodesMap[] = {
 // clang-format on
 
 int keysym(int keycode) {
-  KeyCodeMap from;
+  KeyCodeMap key_map;
 
-  from.winKeycode       = keycode;
-  const KeyCodeMap *ptr = std::lower_bound(
-    kKeyCodesMap, kKeyCodesMap + sizeof(kKeyCodesMap) / sizeof(kKeyCodesMap[0]), from);
+  key_map.win_keycode        = keycode;
+  const KeyCodeMap *temp_map = std::lower_bound(
+    kKeyCodesMap, kKeyCodesMap + sizeof(kKeyCodesMap) / sizeof(kKeyCodesMap[0]), key_map);
 
-  if(ptr >= kKeyCodesMap + sizeof(kKeyCodesMap) / sizeof(kKeyCodesMap[0]) ||
-     ptr->winKeycode != keycode || ptr->macKeycode == -1) {
+  if(temp_map >= kKeyCodesMap + sizeof(kKeyCodesMap) / sizeof(kKeyCodesMap[0]) ||
+     temp_map->win_keycode != keycode || temp_map->mac_keycode == -1) {
     return -1;
   }
 
-  return ptr->macKeycode;
+  return temp_map->mac_keycode;
 }
 
 void keyboard(input_t &input, uint16_t modcode, bool release) {
@@ -242,14 +242,14 @@ void keyboard(input_t &input, uint16_t modcode, bool release) {
     return;
   }
 
-  CGEventSourceRef source    = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
-  CGEventRef saveCommandDown = CGEventCreateKeyboardEvent(source, key, !release);
-  CGEventSetFlags(saveCommandDown, macos_input->kb_flags);
+  CGEventSourceRef event_source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+  CGEventRef keyboard_event     = CGEventCreateKeyboardEvent(event_source, key, !release);
+  CGEventSetFlags(keyboard_event, macos_input->kb_flags);
 
-  CGEventPost(kCGAnnotatedSessionEventTap, saveCommandDown);
+  CGEventPost(kCGAnnotatedSessionEventTap, keyboard_event);
 
-  CFRelease(saveCommandDown);
-  CFRelease(source);
+  CFRelease(keyboard_event);
+  CFRelease(event_source);
 }
 
 int alloc_gamepad(input_t &input, int nr, rumble_queue_t &&rumble_queue) {
@@ -331,32 +331,32 @@ void abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y)
 }
 
 void button_mouse(input_t &input, int button, bool release) {
-  CGMouseButton macButton;
-  CGEventType eventType;
+  CGMouseButton mac_button;
+  CGEventType event;
 
   auto mouse = ((macos_input_t *)input.get());
 
   switch(button) {
   case 1:
-    macButton = kCGMouseButtonLeft;
-    eventType = release ? kCGEventLeftMouseUp : kCGEventLeftMouseDown;
+    mac_button = kCGMouseButtonLeft;
+    event      = release ? kCGEventLeftMouseUp : kCGEventLeftMouseDown;
     break;
   case 2:
-    macButton = kCGMouseButtonCenter;
-    eventType = release ? kCGEventOtherMouseUp : kCGEventOtherMouseDown;
+    mac_button = kCGMouseButtonCenter;
+    event      = release ? kCGEventOtherMouseUp : kCGEventOtherMouseDown;
     break;
   case 3:
-    macButton = kCGMouseButtonRight;
-    eventType = release ? kCGEventRightMouseUp : kCGEventRightMouseDown;
+    mac_button = kCGMouseButtonRight;
+    event      = release ? kCGEventRightMouseUp : kCGEventRightMouseDown;
     break;
   default:
     BOOST_LOG(warning) << "Unsupported mouse button for MacOS: "sv << button;
     return;
   }
 
-  mouse->mouse_down[macButton] = !release;
+  mouse->mouse_down[mac_button] = !release;
 
-  post_mouse(input, macButton, eventType, get_mouse_loc());
+  post_mouse(input, mac_button, event, get_mouse_loc());
 }
 
 void scroll(input_t &input, int high_res_distance) {
@@ -377,6 +377,7 @@ input_t input() {
   macos_input->mouse_down[0] = false;
   macos_input->mouse_down[1] = false;
   macos_input->mouse_down[2] = false;
+
   // If we don't use the main display in the future, this has to be adapted
   macos_input->display = CGMainDisplayID();
 
@@ -386,15 +387,13 @@ input_t input() {
 }
 
 void freeInput(void *p) {
-  BOOST_LOG(verbose) << "Called freeInput"sv;
-}
+  auto *input = (macos_input_t *)p;
 
-std::unique_ptr<deinit_t> init() {
-  return std::make_unique<deinit_t>();
+  delete input;
 }
 
 std::vector<std::string_view> &supported_gamepads() {
-  static std::vector<std::string_view> gamepads { "x360"sv };
+  static std::vector<std::string_view> gamepads { ""sv };
 
   return gamepads;
 }
