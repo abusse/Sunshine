@@ -175,7 +175,7 @@ int force_software_from_view(const std::string_view &software) {
 }
 
 int rt_from_view(const std::string_view &rt) {
-  if (rt == "disabled") return 0;
+  if (rt == "disabled" || rt == "off" || rt == "0") return 0;
   
   return 1;
 }
@@ -699,8 +699,11 @@ void apply_config(std::unordered_map<std::string, std::string> &&vars) {
   int_f(vars, "amd_coder", video.amd.coder, amd::coder_from_view);
 
   int_f(vars, "vt_coder", video.vt.coder, vt::coder_from_view);
+  video.vt.allow_sw = 0;
   int_f(vars, "vt_software", video.vt.allow_sw, vt::allow_software_from_view);
+  video.vt.require_sw = 0;
   int_f(vars, "vt_software", video.vt.require_sw, vt::force_software_from_view);
+  video.vt.realtime = 1;
   int_f(vars, "vt_realtime", video.vt.realtime, vt::rt_from_view);
 
   string_f(vars, "encoder", video.encoder);
