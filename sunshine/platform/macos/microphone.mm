@@ -1,6 +1,7 @@
 #include "sunshine/platform/common.h"
 #include "sunshine/platform/macos/av_audio.h"
 
+#include "sunshine/config.h"
 #include "sunshine/main.h"
 
 namespace platf {
@@ -40,27 +41,33 @@ struct macos_audio_control_t : public audio_control_t {
 
 public:
   int set_sink(const std::string &sink) override {
-    audio_capture_device = [AVAudio findMicrophone:[NSString stringWithUTF8String:sink.c_str()]];
-
-    if(audio_capture_device)
-      return 0;
-    else {
-      BOOST_LOG(warning) << "seting microphone to '"sv << sink << "' failed. Please set a valid input source in the Sunshine config."sv;
-      BOOST_LOG(warning) << "Available inputs:"sv;
-
-      for(NSString *name in [AVAudio microphoneNames]) {
-        BOOST_LOG(warning) << "\t"sv << [name UTF8String];
-      }
-
-      return -1;
-    }
+    BOOST_LOG(warning) << "audio_control_t::set_sink() unimplemented: "sv << sink;
+    return 0;
   }
 
   std::unique_ptr<mic_t> microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size) override {
     auto mic = std::make_unique<av_mic_t>();
-    mic->av_audio_capture = [[AVAudio alloc] init];
+    const char *audio_sink = "";
 
-    if([mic->av_audio_capture setupMicrophone:audio_capture_device sampleRate:sample_rate frameSize:frame_size channels:channels]) {
+    if (!config::audio.sink.empty()) {
+      audio_sink = config::audio.sink.c_str();
+    }
+    
+    if ((audio_capture_device = [AVAudio findMicrophone:[NSString stringWithUTF8String:audio_sink]]) == nullptr) {
+      BOOST_LOG(error) << "opening microphone '"sv << audio_sink << "' failed. Please set a valid input source in the Sunshine config."sv;
+      BOOST_LOG(error) << "Available inputs:"sv;
+
+      for (NSString *name in [AVAudio microphoneNames]) {
+        BOOST_LOG(error) << "\t"sv << [name UTF8String];
+      }
+
+      return nullptr;
+    }
+    
+    mic->av_audio_capture = [[AVAudio alloc]init];
+
+    if ([mic->av_audio_capture setupMicrophone:audio_capture_device sampleRate:sample_rate frameSize:frame_size channels:channels]) {
+      BOOST_LOG(error) << "Failed to setup microphone."sv;
       return nullptr;
     }
 
