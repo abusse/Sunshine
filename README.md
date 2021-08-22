@@ -86,7 +86,17 @@ It's necessary to allow Sunshine to use KMS
 
 ## macOS
 
-### Requirements:
+### Quickstart
+
+- Install [MacPorts](https://www.macports.org)
+- Download the `Portfile` from this repository to `/tmp`
+- In a Terminal run `cd /tmp && sudo port install`
+- Sunshine configuration is in `/opt/local/etc`
+- Run `sunshine` to start the Sunshine server
+
+### Manuel Build
+
+#### Requirements:
 macOS Big Sur and Xcode 12.5+:
 
 Either, using [MacPorts](https://www.macports.org), install the following
@@ -102,19 +112,19 @@ cd /usr/local/include
 ln -s ../opt/openssl/include/openssl .
 ```
 
-### Compilation:
+#### Compilation:
 - `git clone https://github.com/loki-47-6F-64/sunshine.git --recurse-submodules`
 - `cd sunshine && mkdir build && cd build`
 - `cmake ..`
 - `make -j ${nproc}`
 
-If cmake fails complaining to find Boost, try to set the path explicitly: `cmake -DBOOST_ROOT=[boost path] ..`
+If cmake fails complaining to find Boost, try to set the path explicitly: `cmake -DBOOST_ROOT=[boost path] ..`, e.g., `cmake -DBOOST_ROOT=/opt/local/libexec/boost/1.76 ..`
 
 ### Setup:
+- Sunshine can only access microphones on macOS due to system limitations. To stream system audio use [Soundflower](https://github.com/mattingalls/Soundflower) or [BlackHole](https://github.com/ExistentialAudio/BlackHole) and select their sink as audio device in `sunshine.conf`
 - `assets/sunshine.conf` is an example configuration file. Modify it as you see fit, then use it by running: 
 	`sunshine path/to/sunshine.conf`
 - `assets/apps.json` is an [example](README.md#application-list) of a list of applications that are started just before running a stream
-- Sunshine can only access microphones on macOS due to system limitations. To stream system audio use [Soundflower](https://github.com/mattingalls/Soundflower) or [BlackHole](https://github.com/ExistentialAudio/BlackHole) and select their sink as audio device in `sunshine.conf`
 
 ### Usage & Limitations:
 - Command Keys are not forwarded by Moonlight. Right Option-Key is mapped to CMD-Key.
