@@ -1,4 +1,6 @@
 #include <arpa/inet.h>
+#include <dlfcn.h>
+#include <fcntl.h>
 #include <ifaddrs.h>
 #include <net/if_dl.h>
 #include <pwd.h>
@@ -109,3 +111,45 @@ std::string get_mac_address(const std::string_view &address) {
   return "00:00:00:00:00:00"s;
 }
 } // namespace platf
+
+namespace dyn {
+void *handle(const std::vector<const char *> &libs) {
+  void *handle;
+
+  for(auto lib : libs) {
+    handle = dlopen(lib, RTLD_LAZY | RTLD_LOCAL);
+    if(handle) {
+      return handle;
+    }
+  }
+
+  std::stringstream ss;
+  ss << "Couldn't find any of the following libraries: ["sv << libs.front();
+  std::for_each(std::begin(libs) + 1, std::end(libs), [&](auto lib) {
+    ss << ", "sv << lib;
+  });
+
+  ss << ']';
+
+  BOOST_LOG(error) << ss.str();
+
+  return nullptr;
+}
+
+int load(void *handle, const std::vector<std::tuple<apiproc *, const char *>> &funcs, bool strict) {
+  int err = 0;
+  for(auto &func : funcs) {
+    TUPLE_2D_REF(fn, name, func);
+
+    *fn = (void (*)()) dlsym(handle, name);
+
+    if(!*fn && strict) {
+      BOOST_LOG(error) << "Couldn't find function: "sv << name;
+
+      err = -1;
+    }
+  }
+
+  return err;
+}
+} // namespace dyn
