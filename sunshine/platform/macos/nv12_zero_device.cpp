@@ -21,9 +21,9 @@ int nv12_zero_device::convert(platf::img_t &img) {
   av_img_t *av_img = (av_img_t *)&img;
 
   size_t left_pad, right_pad, top_pad, bottom_pad;
-  CVPixelBufferGetExtendedPixels(av_img->pixelBuffer, &left_pad, &right_pad, &top_pad, &bottom_pad);
+  CVPixelBufferGetExtendedPixels(av_img->pixel_buffer, &left_pad, &right_pad, &top_pad, &bottom_pad);
 
-  const uint8_t *data = (const uint8_t *)CVPixelBufferGetBaseAddressOfPlane(av_img->pixelBuffer, 0) - left_pad - (top_pad * img.width);
+  const uint8_t *data = (const uint8_t *)CVPixelBufferGetBaseAddressOfPlane(av_img->pixel_buffer, 0) - left_pad - (top_pad * img.width);
 
   int result = av_image_fill_arrays(av_frame->data, av_frame->linesize, data, (AVPixelFormat)av_frame->format, img.width, img.height, 32);
 
@@ -35,7 +35,7 @@ int nv12_zero_device::convert(platf::img_t &img) {
   //
   // XXX: Improve the algorithm to take into account the outer pixels
 
-  size_t uv_plane_height = CVPixelBufferGetHeightOfPlane(av_img->pixelBuffer, 1);
+  size_t uv_plane_height = CVPixelBufferGetHeightOfPlane(av_img->pixel_buffer, 1);
 
   if(left_pad || right_pad) {
     for(int l = 0; l < uv_plane_height + (top_pad / 2); l++) {

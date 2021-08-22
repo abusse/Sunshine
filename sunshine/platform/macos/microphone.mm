@@ -3,32 +3,25 @@
 
 #include "sunshine/main.h"
 
-namespace fs = std::filesystem;
-
 namespace platf {
 using namespace std::literals;
 
-struct avmic_attr_t : public mic_t {
-  AVAudio *mic;
+struct av_mic_t : public mic_t {
+  AVAudio *av_audio_capture;
 
-  ~avmic_attr_t() {
-    [mic release];
-  }
-
-  std::vector<std::string> display_names() {
-    std::vector<std::string> display_names;
-    return display_names;
+  ~av_mic_t() {
+    [av_audio_capture release];
   }
 
   capture_e sample(std::vector<std::int16_t> &sample_in) override {
     auto sample_size = sample_in.size();
 
     uint32_t length        = 0;
-    void *byteSampleBuffer = TPCircularBufferTail(&mic->audioSampleBuffer, &length);
+    void *byteSampleBuffer = TPCircularBufferTail(&av_audio_capture->audioSampleBuffer, &length);
 
     while(length < sample_size * sizeof(std::int16_t)) {
-      [mic.samplesArrivedSignal wait];
-      byteSampleBuffer = TPCircularBufferTail(&mic->audioSampleBuffer, &length);
+      [av_audio_capture.samplesArrivedSignal wait];
+      byteSampleBuffer = TPCircularBufferTail(&av_audio_capture->audioSampleBuffer, &length);
     }
 
     const int16_t *sampleBuffer = (int16_t *)byteSampleBuffer;
@@ -36,20 +29,20 @@ struct avmic_attr_t : public mic_t {
 
     std::copy_n(std::begin(vectorBuffer), sample_size, std::begin(sample_in));
 
-    TPCircularBufferConsume(&mic->audioSampleBuffer, sample_size * sizeof(std::int16_t));
+    TPCircularBufferConsume(&av_audio_capture->audioSampleBuffer, sample_size * sizeof(std::int16_t));
 
     return capture_e::ok;
   }
 };
 
 struct macos_audio_control_t : public audio_control_t {
-  AVCaptureDevice *device;
+  AVCaptureDevice *audio_capture_device;
 
 public:
   int set_sink(const std::string &sink) override {
-    device = [AVAudio findMicrophone:[NSString stringWithUTF8String:sink.c_str()]];
+    audio_capture_device = [AVAudio findMicrophone:[NSString stringWithUTF8String:sink.c_str()]];
 
-    if(device)
+    if(audio_capture_device)
       return 0;
     else {
       BOOST_LOG(warning) << "seting microphone to '"sv << sink << "' failed. Please set a valid input source in the Sunshine config."sv;
@@ -64,10 +57,10 @@ public:
   }
 
   std::unique_ptr<mic_t> microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size) override {
-    auto mic = std::make_unique<avmic_attr_t>();
-    mic->mic = [[AVAudio alloc] init];
+    auto mic = std::make_unique<av_mic_t>();
+    mic->av_audio_capture = [[AVAudio alloc] init];
 
-    if([mic->mic setupMicrophone:device sampleRate:sample_rate frameSize:frame_size channels:channels]) {
+    if([mic->av_audio_capture setupMicrophone:audio_capture_device sampleRate:sample_rate frameSize:frame_size channels:channels]) {
       return nullptr;
     }
 

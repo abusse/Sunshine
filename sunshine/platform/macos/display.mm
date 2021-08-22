@@ -12,12 +12,12 @@ namespace platf {
 using namespace std::literals;
 
 av_img_t::~av_img_t() {
-  if(pixelBuffer != NULL) {
-    CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
+  if(pixel_buffer != NULL) {
+    CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
   }
 
-  if(sampleBuffer != nullptr) {
-    CFRelease(sampleBuffer);
+  if(sample_buffer != nullptr) {
+    CFRelease(sample_buffer);
   }
 
   data = nullptr;
@@ -42,16 +42,14 @@ struct av_display_t : public display_t {
       CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
       CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
 
-      // XXX: next_img->img should be moved to a smart pointer with
-      // the CFRelease as custom deallocator
-      if(av_img_next->pixelBuffer != nullptr)
-        CVPixelBufferUnlockBaseAddress(av_img_next->pixelBuffer, 0);
+      if(av_img_next->pixel_buffer != nullptr)
+        CVPixelBufferUnlockBaseAddress(av_img_next->pixel_buffer, 0);
 
-      if(av_img_next->sampleBuffer != nullptr)
-        CFRelease(av_img_next->sampleBuffer);
+      if(av_img_next->sample_buffer != nullptr)
+        CFRelease(av_img_next->sample_buffer);
 
-      av_img_next->sampleBuffer = sampleBuffer;
-      av_img_next->pixelBuffer  = pixelBuffer;
+      av_img_next->sample_buffer = sampleBuffer;
+      av_img_next->pixel_buffer  = pixelBuffer;
       img_next->data            = (uint8_t *)CVPixelBufferGetBaseAddress(pixelBuffer);
 
       size_t extraPixels[4];
@@ -107,14 +105,14 @@ struct av_display_t : public display_t {
 
       // XXX: next_img->img should be moved to a smart pointer with
       // the CFRelease as custom deallocator
-      if(av_img->pixelBuffer != nullptr)
-        CVPixelBufferUnlockBaseAddress(((av_img_t *)img)->pixelBuffer, 0);
+      if(av_img->pixel_buffer != nullptr)
+        CVPixelBufferUnlockBaseAddress(((av_img_t *)img)->pixel_buffer, 0);
 
-      if(av_img->sampleBuffer != nullptr)
-        CFRelease(av_img->sampleBuffer);
+      if(av_img->sample_buffer != nullptr)
+        CFRelease(av_img->sample_buffer);
 
-      av_img->sampleBuffer = sampleBuffer;
-      av_img->pixelBuffer  = pixelBuffer;
+      av_img->sample_buffer = sampleBuffer;
+      av_img->pixel_buffer  = pixelBuffer;
       img->data            = (uint8_t *)CVPixelBufferGetBaseAddress(pixelBuffer);
 
       size_t extraPixels[4];

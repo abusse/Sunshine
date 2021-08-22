@@ -4,7 +4,7 @@
 
 + (NSArray<AVCaptureDevice *> *)microphones {
   AVCaptureDeviceDiscoverySession *discoverySession = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInMicrophone,
-    AVCaptureDeviceTypeExternalUnknown]
+                                                                                                                         AVCaptureDeviceTypeExternalUnknown]
                                                                                                              mediaType:AVMediaTypeAudio
                                                                                                               position:AVCaptureDevicePositionUnspecified];
   return discoverySession.devices;
@@ -59,7 +59,6 @@
 
   AVCaptureAudioDataOutput *audioOutput = [[AVCaptureAudioDataOutput alloc] init];
 
-
   [audioOutput setAudioSettings:@{
     (NSString *)AVFormatIDKey: [NSNumber numberWithUnsignedInt:kAudioFormatLinearPCM],
     (NSString *)AVSampleRateKey: [NSNumber numberWithUnsignedInt:sampleRate],
@@ -69,7 +68,9 @@
     (NSString *)AVLinearPCMIsNonInterleaved: @NO
   }];
 
-  dispatch_queue_attr_t qos       = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_CONCURRENT, QOS_CLASS_USER_INITIATED, DISPATCH_QUEUE_PRIORITY_HIGH);
+  dispatch_queue_attr_t qos       = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_CONCURRENT,
+                                                                            QOS_CLASS_USER_INITIATED,
+                                                                            DISPATCH_QUEUE_PRIORITY_HIGH);
   dispatch_queue_t recordingQueue = dispatch_queue_create("audioSamplingQueue", qos);
 
   [audioOutput setSampleBufferDelegate:self queue:recordingQueue];
