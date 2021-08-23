@@ -1,4 +1,6 @@
 #import <Carbon/Carbon.h>
+#include <mach/mach.h>
+#include <mach/mach_time.h>
 
 #include "sunshine/main.h"
 #include "sunshine/platform/common.h"
@@ -11,6 +13,7 @@ struct macos_input_t {
 public:
   CGEventFlags kb_flags;
   bool mouse_down[3];
+  uint64_t last_mouse_event[3][2];
   CGDirectDisplayID display;
 };
 
@@ -147,11 +150,11 @@ const KeyCodeMap kKeyCodesMap[] = {
   { 0x90 /* VKEY_NUMLOCK */,                   -1                      },
   { 0x91 /* VKEY_SCROLL */,                    -1                      },
   { 0xA0 /* VKEY_LSHIFT */,                    kVK_Shift               },
-  { 0xA1 /* VKEY_RSHIFT */,                    kVK_Shift               },
+  { 0xA1 /* VKEY_RSHIFT */,                    kVK_RightShift          },
   { 0xA2 /* VKEY_LCONTROL */,                  kVK_Control             },
-  { 0xA3 /* VKEY_RCONTROL */,                  kVK_Control             },
-  { 0xA4 /* VKEY_LMENU */,                     kVK_Command             },
-  { 0xA5 /* VKEY_RMENU */,                     kVK_Option              },
+  { 0xA3 /* VKEY_RCONTROL */,                  kVK_RightControl        },
+  { 0xA4 /* VKEY_LMENU */,                     kVK_Option              },
+  { 0xA5 /* VKEY_RMENU */,                     kVK_RightOption         },
   { 0xA6 /* VKEY_BROWSER_BACK */,              -1                      },
   { 0xA7 /* VKEY_BROWSER_FORWARD */,           -1                      },
   { 0xA8 /* VKEY_BROWSER_REFRESH */,           -1                      },
@@ -274,7 +277,7 @@ CGPoint get_mouse_loc() {
   return cursor;
 }
 
-void post_mouse(input_t &input, CGMouseButton button, CGEventType type, CGPoint location) {
+void post_mouse(input_t &input, CGMouseButton button, CGEventType type, CGPoint location, int click_count) {
   BOOST_LOG(debug) << "mouse_event: "sv << button << ", type: "sv << type << ", location:"sv << location.x << ":"sv << location.y;
 
   auto display = ((macos_input_t *)input.get())->display;
@@ -291,12 +294,20 @@ void post_mouse(input_t &input, CGMouseButton button, CGEventType type, CGPoint 
 
   CGEventRef event = CGEventCreateMouseEvent(NULL, type, location, button);
 
+  if(click_count > 0) {
+    CGEventSetIntegerValueField(event, kCGMouseEventClickState, click_count);
+  }
+
   CGEventSetType(event, type);
   CGEventPost(kCGHIDEventTap, event);
   CFRelease(event);
   // For why this is here, see:
   // https://stackoverflow.com/questions/15194409/simulated-mouseevent-not-working-properly-osx
   CGWarpMouseCursorPosition(location);
+}
+
+void post_mouse(input_t &input, CGMouseButton button, CGEventType type, CGPoint location) {
+  post_mouse(input, button, type, location, 0);
 }
 
 inline CGEventType event_type_mouse(input_t &input) {
@@ -330,6 +341,16 @@ void abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y)
   post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location);
 }
 
+uint64_t time_diff(uint64_t start) {
+  uint64_t elapsed;
+  Nanoseconds elapsedNano;
+
+  elapsed     = mach_absolute_time() - start;
+  elapsedNano = AbsoluteToNanoseconds(*(AbsoluteTime *)&elapsed);
+
+  return *(uint64_t *)&elapsedNano;
+}
+
 void button_mouse(input_t &input, int button, bool release) {
   CGMouseButton mac_button;
   CGEventType event;
@@ -356,13 +377,23 @@ void button_mouse(input_t &input, int button, bool release) {
 
   mouse->mouse_down[mac_button] = !release;
 
-  post_mouse(input, mac_button, event, get_mouse_loc());
+  // if the last mouse down was less than 500ms, we send a double click event
+  // XXX: We might want to make this number adjustable through the config
+  if(time_diff(mouse->last_mouse_event[mac_button][release]) < 500000000) {
+    post_mouse(input, mac_button, event, get_mouse_loc(), 2);
+  }
+  else {
+    post_mouse(input, mac_button, event, get_mouse_loc());
+  }
+
+  if(!release)
+    mouse->last_mouse_event[mac_button][release] = mach_absolute_time();
 }
 
 void scroll(input_t &input, int high_res_distance) {
   CGEventRef upEvent = CGEventCreateScrollWheelEvent(
     NULL,
-    kCGScrollEventUnitPixel,
+    kCGScrollEventUnitLine,
     2, high_res_distance > 0 ? 1 : -1, high_res_distance);
   CGEventPost(kCGHIDEventTap, upEvent);
   CFRelease(upEvent);
@@ -373,10 +404,16 @@ input_t input() {
 
   auto macos_input = (macos_input_t *)result.get();
 
-  macos_input->kb_flags      = 0;
-  macos_input->mouse_down[0] = false;
-  macos_input->mouse_down[1] = false;
-  macos_input->mouse_down[2] = false;
+  macos_input->kb_flags            = 0;
+  macos_input->mouse_down[0]       = false;
+  macos_input->mouse_down[1]       = false;
+  macos_input->mouse_down[2]       = false;
+  macos_input->last_mouse_event[0][0] = 0;
+  macos_input->last_mouse_event[0][1] = 0;
+  macos_input->last_mouse_event[1][0] = 0;
+  macos_input->last_mouse_event[1][1] = 0;
+  macos_input->last_mouse_event[2][0] = 0;
+  macos_input->last_mouse_event[2][1] = 0;
 
   // If we don't use the main display in the future, this has to be adapted
   macos_input->display = CGMainDisplayID();
