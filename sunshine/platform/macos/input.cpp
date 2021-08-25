@@ -6,15 +6,26 @@
 #include "sunshine/platform/common.h"
 #include "sunshine/utility.h"
 
+// Delay for a double click
+// FIXME: we probably want to make this configurable
+#define MULTICLICK_DELAY_NS 500000000
+
 namespace platf {
 using namespace std::literals;
 
 struct macos_input_t {
 public:
-  CGEventFlags kb_flags;
-  bool mouse_down[3];
-  uint64_t last_mouse_event[3][2];
   CGDirectDisplayID display;
+  CGEventSourceRef source;
+
+  // keyboard related stuff
+  CGEventRef kb_event;
+  CGEventFlags kb_flags;
+
+  // mouse related stuff
+  CGEventRef mouse_event;          // mouse event source
+  bool mouse_down[3];              // mouse button status
+  uint64_t last_mouse_event[3][2]; // timestamp of last mouse events
 };
 
 // A struct to hold a Windows keycode to Mac virtual keycode mapping.
@@ -218,69 +229,77 @@ int keysym(int keycode) {
 void keyboard(input_t &input, uint16_t modcode, bool release) {
   auto key = keysym(modcode);
 
-  BOOST_LOG(debug) << "got keycode: "sv << modcode << ", translated to: " << key << ", release:" << release;
+  BOOST_LOG(debug) << "got keycode: 0x"sv << std::hex << modcode << ", translated to: 0x" << std::hex << key << ", release:" << release;
 
   if(key < 0) {
     return;
   }
 
   auto macos_input = ((macos_input_t *)input.get());
+  auto event       = macos_input->kb_event;
 
-  switch(key) {
-  case kVK_Shift:
-  case kVK_RightShift:
-    macos_input->kb_flags = release ? macos_input->kb_flags & ~kCGEventFlagMaskShift : macos_input->kb_flags | kCGEventFlagMaskShift;
-    return;
-  case kVK_Command:
-  case kVK_RightCommand:
-    macos_input->kb_flags = release ? macos_input->kb_flags & ~kCGEventFlagMaskCommand : macos_input->kb_flags | kCGEventFlagMaskCommand;
-    return;
-  case kVK_Option:
-  case kVK_RightOption:
-    macos_input->kb_flags = release ? macos_input->kb_flags & ~kCGEventFlagMaskAlternate : macos_input->kb_flags | kCGEventFlagMaskAlternate;
-    return;
-  case kVK_Control:
-  case kVK_RightControl:
-    macos_input->kb_flags = release ? macos_input->kb_flags & ~kCGEventFlagMaskControl : macos_input->kb_flags | kCGEventFlagMaskControl;
-    return;
+  if(key == kVK_Shift || key == kVK_RightShift ||
+     key == kVK_Command || key == kVK_RightCommand ||
+     key == kVK_Option || key == kVK_RightOption ||
+     key == kVK_Control || key == kVK_RightControl) {
+
+    CGEventFlags mask;
+
+    switch(key) {
+    case kVK_Shift:
+    case kVK_RightShift:
+      mask = kCGEventFlagMaskShift;
+      break;
+    case kVK_Command:
+    case kVK_RightCommand:
+      mask = kCGEventFlagMaskCommand;
+      break;
+    case kVK_Option:
+    case kVK_RightOption:
+      mask = kCGEventFlagMaskAlternate;
+      break;
+    case kVK_Control:
+    case kVK_RightControl:
+      mask = kCGEventFlagMaskControl;
+      break;
+    }
+
+    macos_input->kb_flags = release ? macos_input->kb_flags & ~mask : macos_input->kb_flags | mask;
+    CGEventSetType(event, kCGEventFlagsChanged);
+    CGEventSetFlags(event, macos_input->kb_flags);
+  }
+  else {
+    CGEventSetIntegerValueField(event, kCGKeyboardEventKeycode, key);
+    CGEventSetType(event, release ? kCGEventKeyUp : kCGEventKeyDown);
   }
 
-  CGEventSourceRef event_source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
-  CGEventRef keyboard_event     = CGEventCreateKeyboardEvent(event_source, key, !release);
-  CGEventSetFlags(keyboard_event, macos_input->kb_flags);
-
-  CGEventPost(kCGAnnotatedSessionEventTap, keyboard_event);
-
-  CFRelease(keyboard_event);
-  CFRelease(event_source);
+  CGEventPost(kCGHIDEventTap, event);
 }
 
 int alloc_gamepad(input_t &input, int nr, rumble_queue_t &&rumble_queue) {
-  BOOST_LOG(debug) << "alloc_gamepad: Gamepad not yet implemented for MacOS."sv;
+  BOOST_LOG(info) << "alloc_gamepad: Gamepad not yet implemented for MacOS."sv;
   return -1;
 }
 
 void free_gamepad(input_t &input, int nr) {
-  BOOST_LOG(debug) << "free_gamepad: Gamepad not yet implemented for MacOS."sv;
+  BOOST_LOG(info) << "free_gamepad: Gamepad not yet implemented for MacOS."sv;
 }
 
 void gamepad(input_t &input, int nr, const gamepad_state_t &gamepad_state) {
-  BOOST_LOG(debug) << "gamepad: Gamepad not yet implemented for MacOS."sv;
+  BOOST_LOG(info) << "gamepad: Gamepad not yet implemented for MacOS."sv;
 }
 
 // returns current mouse location:
-CGPoint get_mouse_loc() {
-  CGEventRef event = CGEventCreate(NULL);
-  CGPoint cursor   = CGEventGetLocation(event);
-
-  CFRelease(event);
-  return cursor;
+inline CGPoint get_mouse_loc(input_t &input) {
+  return CGEventGetLocation(((macos_input_t *)input.get())->mouse_event);
 }
 
 void post_mouse(input_t &input, CGMouseButton button, CGEventType type, CGPoint location, int click_count) {
-  BOOST_LOG(debug) << "mouse_event: "sv << button << ", type: "sv << type << ", location:"sv << location.x << ":"sv << location.y;
+  BOOST_LOG(debug) << "mouse_event: "sv << button << ", type: "sv << type << ", location:"sv << location.x << ":"sv << location.y << " click_count: "sv << click_count;
 
-  auto display = ((macos_input_t *)input.get())->display;
+  auto macos_input = (macos_input_t *)input.get();
+  auto display     = macos_input->display;
+  auto event       = macos_input->mouse_event;
 
   if(location.x < 0)
     location.x = 0;
@@ -292,22 +311,16 @@ void post_mouse(input_t &input, CGMouseButton button, CGEventType type, CGPoint 
   if(location.y >= CGDisplayPixelsHigh(display))
     location.y = CGDisplayPixelsHigh(display) - 1;
 
-  CGEventRef event = CGEventCreateMouseEvent(NULL, type, location, button);
-
-  if(click_count > 0) {
-    CGEventSetIntegerValueField(event, kCGMouseEventClickState, click_count);
-  }
-
   CGEventSetType(event, type);
+  CGEventSetLocation(event, location);
+  CGEventSetIntegerValueField(event, kCGMouseEventButtonNumber, button);
+  CGEventSetIntegerValueField(event, kCGMouseEventClickState, click_count);
+
   CGEventPost(kCGHIDEventTap, event);
-  CFRelease(event);
+
   // For why this is here, see:
   // https://stackoverflow.com/questions/15194409/simulated-mouseevent-not-working-properly-osx
   CGWarpMouseCursorPosition(location);
-}
-
-void post_mouse(input_t &input, CGMouseButton button, CGEventType type, CGPoint location) {
-  post_mouse(input, button, type, location, 0);
 }
 
 inline CGEventType event_type_mouse(input_t &input) {
@@ -328,17 +341,17 @@ inline CGEventType event_type_mouse(input_t &input) {
 }
 
 void move_mouse(input_t &input, int deltaX, int deltaY) {
-  auto current = get_mouse_loc();
+  auto current = get_mouse_loc(input);
 
   CGPoint location = CGPointMake(current.x + deltaX, current.y + deltaY);
 
-  post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location);
+  post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location, 0);
 }
 
 void abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y) {
   CGPoint location = CGPointMake(x, y);
 
-  post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location);
+  post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location, 0);
 }
 
 uint64_t time_diff(uint64_t start) {
@@ -377,17 +390,15 @@ void button_mouse(input_t &input, int button, bool release) {
 
   mouse->mouse_down[mac_button] = !release;
 
-  // if the last mouse down was less than 500ms, we send a double click event
-  // XXX: We might want to make this number adjustable through the config
-  if(time_diff(mouse->last_mouse_event[mac_button][release]) < 500000000) {
-    post_mouse(input, mac_button, event, get_mouse_loc(), 2);
+  // if the last mouse down was less than MULTICLICK_DELAY_NS, we send a double click event
+  if(time_diff(mouse->last_mouse_event[mac_button][release]) < MULTICLICK_DELAY_NS) {
+    post_mouse(input, mac_button, event, get_mouse_loc(input), 2);
   }
   else {
-    post_mouse(input, mac_button, event, get_mouse_loc());
+    post_mouse(input, mac_button, event, get_mouse_loc(input), 1);
   }
 
-  if(!release)
-    mouse->last_mouse_event[mac_button][release] = mach_absolute_time();
+  mouse->last_mouse_event[mac_button][release] = mach_absolute_time();
 }
 
 void scroll(input_t &input, int high_res_distance) {
@@ -404,19 +415,23 @@ input_t input() {
 
   auto macos_input = (macos_input_t *)result.get();
 
-  macos_input->kb_flags            = 0;
-  macos_input->mouse_down[0]       = false;
-  macos_input->mouse_down[1]       = false;
-  macos_input->mouse_down[2]       = false;
+  // If we don't use the main display in the future, this has to be adapted
+  macos_input->display = CGMainDisplayID();
+  macos_input->source  = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+
+  macos_input->kb_event = CGEventCreate(macos_input->source);
+  macos_input->kb_flags = 0;
+
+  macos_input->mouse_event            = CGEventCreate(macos_input->source);
+  macos_input->mouse_down[0]          = false;
+  macos_input->mouse_down[1]          = false;
+  macos_input->mouse_down[2]          = false;
   macos_input->last_mouse_event[0][0] = 0;
   macos_input->last_mouse_event[0][1] = 0;
   macos_input->last_mouse_event[1][0] = 0;
   macos_input->last_mouse_event[1][1] = 0;
   macos_input->last_mouse_event[2][0] = 0;
   macos_input->last_mouse_event[2][1] = 0;
-
-  // If we don't use the main display in the future, this has to be adapted
-  macos_input->display = CGMainDisplayID();
 
   BOOST_LOG(debug) << "Display "sv << macos_input->display << ", pixel dimention: " << CGDisplayPixelsWide(macos_input->display) << "x"sv << CGDisplayPixelsHigh(macos_input->display);
 
@@ -425,6 +440,10 @@ input_t input() {
 
 void freeInput(void *p) {
   auto *input = (macos_input_t *)p;
+
+  CFRelease(input->source);
+  CFRelease(input->kb_event);
+  CFRelease(input->mouse_event);
 
   delete input;
 }
