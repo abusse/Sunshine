@@ -93,6 +93,7 @@ It's necessary to allow Sunshine to use KMS
 - In a Terminal run `cd /tmp && sudo port install`
 - Sunshine configuration is in `/opt/local/etc`
 - Run `sunshine` to start the Sunshine server
+- You will be asked to grant access to screen recording and your microphone to be able to stream it
 
 ### Manuel Build
 

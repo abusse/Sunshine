@@ -141,7 +141,7 @@ int load(void *handle, const std::vector<std::tuple<apiproc *, const char *>> &f
   for(auto &func : funcs) {
     TUPLE_2D_REF(fn, name, func);
 
-    *fn = (void (*)()) dlsym(handle, name);
+    *fn = (void (*)())dlsym(handle, name);
 
     if(!*fn && strict) {
       BOOST_LOG(error) << "Couldn't find function: "sv << name;

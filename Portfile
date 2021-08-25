@@ -6,7 +6,7 @@ PortGroup           github 1.0
 PortGroup           boost 1.0
 
 github.setup        abusse sunshine macos-dev
-version             20210822
+version             20210825
 
 categories          multimedia
 platforms           darwin
@@ -23,7 +23,7 @@ long_description    Sunshine is a Gamestream host for Moonlight
 
 homepage            https://github.com/loki-47-6F-64/sunshine
 
-depends_lib         port:libopus port:ffmpeg
+depends_lib         port:avahi port:ffmpeg port:libopus
 
 
 boost.version       1.76

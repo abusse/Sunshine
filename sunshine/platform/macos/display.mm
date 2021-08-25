@@ -50,7 +50,7 @@ struct av_display_t : public display_t {
 
       av_img_next->sample_buffer = sampleBuffer;
       av_img_next->pixel_buffer  = pixelBuffer;
-      img_next->data            = (uint8_t *)CVPixelBufferGetBaseAddress(pixelBuffer);
+      img_next->data             = (uint8_t *)CVPixelBufferGetBaseAddress(pixelBuffer);
 
       size_t extraPixels[4];
       CVPixelBufferGetExtendedPixels(pixelBuffer, &extraPixels[0], &extraPixels[1], &extraPixels[2], &extraPixels[3]);
@@ -113,7 +113,7 @@ struct av_display_t : public display_t {
 
       av_img->sample_buffer = sampleBuffer;
       av_img->pixel_buffer  = pixelBuffer;
-      img->data            = (uint8_t *)CVPixelBufferGetBaseAddress(pixelBuffer);
+      img->data             = (uint8_t *)CVPixelBufferGetBaseAddress(pixelBuffer);
 
       size_t extraPixels[4];
       CVPixelBufferGetExtendedPixels(pixelBuffer, &extraPixels[0], &extraPixels[1], &extraPixels[2], &extraPixels[3]);
