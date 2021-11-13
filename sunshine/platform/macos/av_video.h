@@ -28,14 +28,14 @@ typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 @property(nonatomic, assign) AVCaptureSession *session;
 @property(nonatomic, assign) NSMapTable<AVCaptureConnection *, AVCaptureVideoDataOutput *> *videoOutputs;
 @property(nonatomic, assign) NSMapTable<AVCaptureConnection *, FrameCallbackBlock> *captureCallbacks;
-@property(nonatomic, assign) NSMapTable<AVCaptureConnection *, NSCondition *> *captureSignals;
+@property(nonatomic, assign) NSMapTable<AVCaptureConnection *, dispatch_semaphore_t> *captureSignals;
 
 + (NSArray<NSDictionary *> *)displayNames;
 
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate;
 
 - (void)setFrameWidth:(int)frameWidth frameHeight:(int)frameHeight;
-- (NSCondition *)capture:(FrameCallbackBlock)frameCallback;
+- (dispatch_semaphore_t)capture:(FrameCallbackBlock)frameCallback;
 
 @end
 

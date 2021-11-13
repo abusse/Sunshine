@@ -65,8 +65,7 @@ struct av_display_t : public display_t {
       return img_next != nullptr;
     }];
 
-    [signal wait];
-    [signal release];
+    dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
 
     return capture_e::ok;
   }
@@ -126,8 +125,7 @@ struct av_display_t : public display_t {
       return false;
     }];
 
-    [signal wait];
-    [signal release];
+    dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
 
     return 0;
   }

@@ -116,7 +116,7 @@
   CFRelease(screenshot);
 }
 
-- (NSCondition *)capture:(FrameCallbackBlock)frameCallback {
+- (dispatch_semaphore_t)capture:(FrameCallbackBlock)frameCallback {
   @synchronized(self) {
     AVCaptureVideoDataOutput *videoOutput = [[AVCaptureVideoDataOutput alloc] init];
 
@@ -147,7 +147,7 @@
     }
 
     AVCaptureConnection *videoConnection = [videoOutput connectionWithMediaType:AVMediaTypeVideo];
-    NSCondition *signal                  = [[NSCondition alloc] init];
+    dispatch_semaphore_t signal          = dispatch_semaphore_create(0);
 
     [self.videoOutputs setObject:videoOutput forKey:videoConnection];
     [self.captureCallbacks setObject:frameCallback forKey:videoConnection];
@@ -172,7 +172,7 @@
         [self.captureCallbacks removeObjectForKey:connection];
         [self.session removeOutput:[self.videoOutputs objectForKey:connection]];
         [self.videoOutputs removeObjectForKey:connection];
-        [[self.captureSignals objectForKey:connection] broadcast];
+        dispatch_semaphore_signal([self.captureSignals objectForKey:connection]);
         [self.captureSignals removeObjectForKey:connection];
         [self.session startRunning];
       }
