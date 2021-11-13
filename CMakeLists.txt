@@ -133,6 +133,9 @@ elseif(APPLE)
 		${CORE_VIDEO_LIBRARY}
 		${FOUNDATION_LIBRARY})
 
+	set(PLATFORM_INCLUDE_DIRS
+		${Boost_INCLUDE_DIR})
+
 	set(PLATFORM_TARGET_FILES
 		sunshine/platform/macos/av_audio.h
 		sunshine/platform/macos/av_audio.m
