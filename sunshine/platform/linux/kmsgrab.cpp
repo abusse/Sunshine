@@ -1,6 +1,7 @@
 #include <drm_fourcc.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/capability.h>
 #include <unistd.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -15,6 +16,7 @@
 // Cursor rendering support through x11
 #include "graphics.h"
 #include "vaapi.h"
+#include "wayland.h"
 #include "x11grab.h"
 
 using namespace std::literals;
@@ -23,12 +25,83 @@ namespace fs = std::filesystem;
 namespace platf {
 
 namespace kms {
+
+class cap_sys_admin {
+public:
+  cap_sys_admin() {
+    caps = cap_get_proc();
+
+    cap_value_t sys_admin = CAP_SYS_ADMIN;
+    if(cap_set_flag(caps, CAP_EFFECTIVE, 1, &sys_admin, CAP_SET) || cap_set_proc(caps)) {
+      BOOST_LOG(error) << "Failed to gain CAP_SYS_ADMIN";
+    }
+  }
+
+  ~cap_sys_admin() {
+    cap_value_t sys_admin = CAP_SYS_ADMIN;
+    if(cap_set_flag(caps, CAP_EFFECTIVE, 1, &sys_admin, CAP_CLEAR) || cap_set_proc(caps)) {
+      BOOST_LOG(error) << "Failed to drop CAP_SYS_ADMIN";
+    }
+    cap_free(caps);
+  }
+
+  cap_t caps;
+};
+
+class wrapper_fb {
+public:
+  wrapper_fb(drmModeFB *fb)
+      : fb { fb }, fb_id { fb->fb_id }, width { fb->width }, height { fb->height } {
+    pixel_format = DRM_FORMAT_XRGB8888;
+    modifier     = DRM_FORMAT_MOD_INVALID;
+    std::fill_n(handles, 4, 0);
+    std::fill_n(pitches, 4, 0);
+    std::fill_n(offsets, 4, 0);
+    handles[0] = fb->handle;
+    pitches[0] = fb->pitch;
+  }
+
+  wrapper_fb(drmModeFB2 *fb2)
+      : fb2 { fb2 }, fb_id { fb2->fb_id }, width { fb2->width }, height { fb2->height } {
+    pixel_format = fb2->pixel_format;
+    modifier     = (fb2->flags & DRM_MODE_FB_MODIFIERS) ? fb2->modifier : DRM_FORMAT_MOD_INVALID;
+
+    memcpy(handles, fb2->handles, sizeof(handles));
+    memcpy(pitches, fb2->pitches, sizeof(pitches));
+    memcpy(offsets, fb2->offsets, sizeof(offsets));
+  }
+
+  ~wrapper_fb() {
+    if(fb) {
+      drmModeFreeFB(fb);
+    }
+    else if(fb2) {
+      drmModeFreeFB2(fb2);
+    }
+  }
+
+  drmModeFB *fb   = nullptr;
+  drmModeFB2 *fb2 = nullptr;
+  uint32_t fb_id;
+  uint32_t width;
+  uint32_t height;
+  uint32_t pixel_format;
+  uint64_t modifier;
+  uint32_t handles[4];
+  uint32_t pitches[4];
+  uint32_t offsets[4];
+};
+
 using plane_res_t = util::safe_ptr<drmModePlaneRes, drmModeFreePlaneResources>;
+using encoder_t   = util::safe_ptr<drmModeEncoder, drmModeFreeEncoder>;
+using res_t       = util::safe_ptr<drmModeRes, drmModeFreeResources>;
 using plane_t     = util::safe_ptr<drmModePlane, drmModeFreePlane>;
-using fb_t        = util::safe_ptr<drmModeFB, drmModeFreeFB>;
+using fb_t        = std::unique_ptr<wrapper_fb>;
 using crtc_t      = util::safe_ptr<drmModeCrtc, drmModeFreeCrtc>;
 using obj_prop_t  = util::safe_ptr<drmModeObjectProperties, drmModeFreeObjectProperties>;
 using prop_t      = util::safe_ptr<drmModePropertyRes, drmModeFreeProperty>;
+
+using conn_type_count_t = std::map<std::uint32_t, std::uint32_t>;
 
 static int env_width;
 static int env_height;
@@ -44,6 +117,58 @@ std::string_view plane_type(std::uint64_t val) {
   }
 
   return "UNKNOWN"sv;
+}
+
+struct connector_t {
+  // For example: HDMI-A or HDMI
+  std::uint32_t type;
+
+  // Equals zero if not applicable
+  std::uint32_t crtc_id;
+
+  // For example HDMI-A-{index} or HDMI-{index}
+  std::uint32_t index;
+
+  bool connected;
+};
+
+struct monitor_t {
+  std::uint32_t type;
+
+  std::uint32_t index;
+
+  platf::touch_port_t viewport;
+};
+
+struct card_descriptor_t {
+  std::string path;
+
+  std::map<std::uint32_t, monitor_t> crtc_to_monitor;
+};
+
+static std::vector<card_descriptor_t> card_descriptors;
+
+static std::uint32_t from_view(const std::string_view &string) {
+#define _CONVERT(x, y) \
+  if(string == x) return DRM_MODE_CONNECTOR_##y
+
+  _CONVERT("VGA"sv, VGA);
+  _CONVERT("DVI-I"sv, DVII);
+  _CONVERT("DVI-D"sv, DVID);
+  _CONVERT("DVI-A"sv, DVIA);
+  _CONVERT("S-Video"sv, SVIDEO);
+  _CONVERT("LVDS"sv, LVDS);
+  _CONVERT("DIN"sv, 9PinDIN);
+  _CONVERT("DisplayPort"sv, DisplayPort);
+  _CONVERT("DP"sv, DisplayPort);
+  _CONVERT("HDMI-A"sv, HDMIA);
+  _CONVERT("HDMI"sv, HDMIA);
+  _CONVERT("HDMI-B"sv, HDMIB);
+  _CONVERT("eDP"sv, eDP);
+  _CONVERT("DSI"sv, DSI);
+
+  BOOST_LOG(error) << "Unknown Monitor connector type ["sv << string << "]: Please report this to the Github issue tracker"sv;
+  return DRM_MODE_CONNECTOR_Unknown;
 }
 
 class plane_it_t : public util::it_wrap_t<plane_t::element_type, plane_it_t> {
@@ -95,7 +220,10 @@ public:
 
 class card_t {
 public:
+  using connector_interal_t = util::safe_ptr<drmModeConnector, drmModeFreeConnector>;
+
   int init(const char *path) {
+    cap_sys_admin admin;
     fd.el = open(path, O_RDWR);
 
     if(fd.el < 0) {
@@ -122,11 +250,77 @@ public:
   }
 
   fb_t fb(plane_t::pointer plane) {
-    return drmModeGetFB(fd.el, plane->fb_id);
+    cap_sys_admin admin;
+    auto fb = drmModeGetFB2(fd.el, plane->fb_id);
+    if(fb) {
+      return std::make_unique<wrapper_fb>(fb);
+    }
+    return std::make_unique<wrapper_fb>(drmModeGetFB(fd.el, plane->fb_id));
   }
 
   crtc_t crtc(std::uint32_t id) {
     return drmModeGetCrtc(fd.el, id);
+  }
+
+  encoder_t encoder(std::uint32_t id) {
+    return drmModeGetEncoder(fd.el, id);
+  }
+
+  res_t res() {
+    return drmModeGetResources(fd.el);
+  }
+
+  bool is_cursor(std::uint32_t plane_id) {
+    auto props = plane_props(plane_id);
+    for(auto &[prop, val] : props) {
+      if(prop->name == "type"sv) {
+        if(val == DRM_PLANE_TYPE_CURSOR) {
+          return true;
+        }
+        else {
+          return false;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  connector_interal_t connector(std::uint32_t id) {
+    return drmModeGetConnector(fd.el, id);
+  }
+
+  std::vector<connector_t> monitors(conn_type_count_t &conn_type_count) {
+    auto resources = res();
+    if(!resources) {
+      BOOST_LOG(error) << "Couldn't get connector resources"sv;
+      return {};
+    }
+
+    std::vector<connector_t> monitors;
+    std::for_each_n(resources->connectors, resources->count_connectors, [this, &conn_type_count, &monitors](std::uint32_t id) {
+      auto conn = connector(id);
+
+      std::uint32_t crtc_id = 0;
+
+      if(conn->encoder_id) {
+        auto enc = encoder(conn->encoder_id);
+        if(enc) {
+          crtc_id = enc->crtc_id;
+        }
+      }
+
+      auto index = ++conn_type_count[conn->connector_type];
+
+      monitors.emplace_back(connector_t {
+        conn->connector_type,
+        crtc_id,
+        index,
+        conn->connection == DRM_MODE_CONNECTED,
+      });
+    });
+
+    return monitors;
   }
 
   file_t handleFD(std::uint32_t handle) {
@@ -139,7 +333,6 @@ public:
 
     return fb_fd;
   }
-
 
   std::vector<std::pair<prop_t, std::uint64_t>> props(std::uint32_t id, std::uint32_t type) {
     obj_prop_t obj_prop = drmModeObjectGetProperties(fd.el, id, type);
@@ -166,8 +359,7 @@ public:
     return props(id, DRM_MODE_OBJECT_CONNECTOR);
   }
 
-  plane_t
-  operator[](std::uint32_t index) {
+  plane_t operator[](std::uint32_t index) {
     return drmModeGetPlane(fd.el, plane_res->planes[index]);
   }
 
@@ -187,6 +379,20 @@ public:
   file_t fd;
   plane_res_t plane_res;
 };
+
+std::map<std::uint32_t, monitor_t> map_crtc_to_monitor(const std::vector<connector_t> &connectors) {
+  std::map<std::uint32_t, monitor_t> result;
+
+  for(auto &connector : connectors) {
+    result.emplace(connector.crtc_id,
+      monitor_t {
+        connector.type,
+        connector.index,
+      });
+  }
+
+  return result;
+}
 
 struct kms_img_t : public img_t {
   ~kms_img_t() override {
@@ -212,9 +418,8 @@ void print(plane_t::pointer plane, fb_t::pointer fb, crtc_t::pointer crtc) {
 
   BOOST_LOG(debug)
     << "Resolution: "sv << fb->width << 'x' << fb->height
-    << ": Pitch: "sv << fb->pitch
-    << ": bpp: "sv << fb->bpp
-    << ": depth: "sv << fb->depth;
+    << ": Pitch: "sv << fb->pitches[0]
+    << ": Offset: "sv << fb->offsets[0];
 
   std::stringstream ss;
 
@@ -231,53 +436,6 @@ void print(plane_t::pointer plane, fb_t::pointer fb, crtc_t::pointer crtc) {
 class display_t : public platf::display_t {
 public:
   display_t(mem_type_e mem_type) : platf::display_t(), mem_type { mem_type } {}
-  ~display_t() {
-    while(!thread_pool.cancel(loop_id))
-      ;
-  }
-
-  mem_type_e mem_type;
-
-  std::chrono::nanoseconds delay;
-
-  // Done on a seperate thread to prevent additional latency to capture code
-  // This code detects if the framebuffer has been removed from KMS
-  void task_loop() {
-    capture_e capture = capture_e::reinit;
-
-    std::uint32_t framebuffer_count = 0;
-
-    auto end = std::end(card);
-    for(auto plane = std::begin(card); plane != end; ++plane) {
-      if(++framebuffer_count != framebuffer_index) {
-        continue;
-      }
-
-      auto fb = card.fb(plane.get());
-      if(!fb) {
-        BOOST_LOG(error) << "Couldn't get drm fb for plane ["sv << plane->fb_id << "]: "sv << strerror(errno);
-        capture = capture_e::error;
-      }
-
-      auto crct = card.crtc(plane->crtc_id);
-
-      bool different =
-        fb->width != img_width ||
-        fb->height != img_height ||
-        fb->pitch != pitch ||
-        crct->x != offset_x ||
-        crct->y != offset_y;
-
-      if(!different) {
-        capture = capture_e::ok;
-        break;
-      }
-    }
-
-    this->status = capture;
-
-    loop_id = thread_pool.pushDelayed(&display_t::task_loop, 2s, this).task_id;
-  }
 
   int init(const std::string &display_name, int framerate) {
     delay = std::chrono::nanoseconds { 1s } / framerate;
@@ -290,7 +448,7 @@ public:
       auto file = entry.path().filename();
 
       auto filestring = file.generic_u8string();
-      if(std::string_view { filestring }.substr(0, 4) != "card"sv) {
+      if(filestring.size() < 4 || std::string_view { filestring }.substr(0, 4) != "card"sv) {
         continue;
       }
 
@@ -299,28 +457,9 @@ public:
         return {};
       }
 
-      std::uint32_t framebuffer_index = 0;
-
       auto end = std::end(card);
       for(auto plane = std::begin(card); plane != end; ++plane) {
-        ++framebuffer_index;
-
-        bool cursor = false;
-
-        auto props = card.plane_props(plane->plane_id);
-        for(auto &[prop, val] : props) {
-          if(prop->name == "type"sv) {
-            BOOST_LOG(verbose) << prop->name << "::"sv << kms::plane_type(val);
-
-            if(val == DRM_PLANE_TYPE_CURSOR) {
-              // Don't count as a monitor when it is a cursor
-              cursor = true;
-              break;
-            }
-          }
-        }
-
-        if(cursor) {
+        if(card.is_cursor(plane->plane_id)) {
           continue;
         }
 
@@ -335,40 +474,73 @@ public:
           return -1;
         }
 
-        if(!fb->handle) {
+        if(!fb->handles[0]) {
           BOOST_LOG(error)
-            << "Couldn't get handle for DRM Framebuffer ["sv << plane->fb_id << "]: Possibly not permitted: do [sudo setcap cap_sys_admin+ep sunshine]"sv;
+            << "Couldn't get handle for DRM Framebuffer ["sv << plane->fb_id << "]: Possibly not permitted: do [sudo setcap cap_sys_admin+p sunshine]"sv;
           return -1;
         }
 
-        fb_fd = card.handleFD(fb->handle);
-        if(fb_fd.el < 0) {
-          BOOST_LOG(error) << "Couldn't get primary file descriptor for Framebuffer ["sv << fb->fb_id << "]: "sv << strerror(errno);
-          continue;
+        for(int i = 0; i < 4; ++i) {
+          if(!fb->handles[i]) {
+            break;
+          }
+
+          auto fb_fd = card.handleFD(fb->handles[i]);
+          if(fb_fd.el < 0) {
+            BOOST_LOG(error) << "Couldn't get primary file descriptor for Framebuffer ["sv << fb->fb_id << "]: "sv << strerror(errno);
+            continue;
+          }
         }
 
         BOOST_LOG(info) << "Found monitor for DRM screencasting"sv;
 
+        // We need to find the correct /dev/dri/card{nr} to correlate the crtc_id with the monitor descriptor
+        auto pos = std::find_if(std::begin(card_descriptors), std::end(card_descriptors), [&](card_descriptor_t &cd) {
+          return cd.path == filestring;
+        });
+
+        if(pos == std::end(card_descriptors)) {
+          // This code path shouldn't happend, but it's there just in case.
+          // card_descriptors is part of the guesswork after all.
+          BOOST_LOG(error) << "Couldn't find ["sv << entry.path() << "]: This shouldn't have happened :/"sv;
+          return -1;
+        }
+
+        //TODO: surf_sd = fb->to_sd();
+
         auto crct = card.crtc(plane->crtc_id);
         kms::print(plane.get(), fb.get(), crct.get());
 
-        img_width  = fb->width;
-        img_height = fb->height;
-
-        width  = crct->width;
-        height = crct->height;
-
-        pitch = fb->pitch;
+        img_width    = fb->width;
+        img_height   = fb->height;
+        img_offset_x = crct->x;
+        img_offset_y = crct->y;
 
         this->env_width  = ::platf::kms::env_width;
         this->env_height = ::platf::kms::env_height;
 
-        offset_x = crct->x;
-        offset_y = crct->y;
+        auto monitor = pos->crtc_to_monitor.find(plane->crtc_id);
+        if(monitor != std::end(pos->crtc_to_monitor)) {
+          auto &viewport = monitor->second.viewport;
+
+          width    = viewport.width;
+          height   = viewport.height;
+          offset_x = viewport.offset_x;
+          offset_y = viewport.offset_y;
+        }
+        // This code path shouldn't happend, but it's there just in case.
+        // crtc_to_monitor is part of the guesswork after all.
+        else {
+          BOOST_LOG(warning) << "Couldn't find crtc_id, this shouldn't have happened :\\"sv;
+          width    = crct->width;
+          height   = crct->height;
+          offset_x = crct->x;
+          offset_y = crct->y;
+        }
 
         this->card = std::move(card);
 
-        this->framebuffer_index = framebuffer_index;
+        plane_id = plane->plane_id;
 
         goto break_loop;
       }
@@ -384,29 +556,69 @@ public:
 
     cursor_opt = x11::cursor_t::make();
 
-    status = capture_e::ok;
-
-    thread_pool.start(1);
-    loop_id = thread_pool.pushDelayed(&display_t::task_loop, 2s, this).task_id;
-
     return 0;
   }
 
-  // When the framebuffer is reinitialized, this id can no longer be found
-  std::uint32_t framebuffer_index;
+  inline capture_e refresh(file_t *file, egl::surface_descriptor_t *sd) {
+    plane_t plane = drmModeGetPlane(card.fd.el, plane_id);
 
-  capture_e status;
+    auto fb = card.fb(plane.get());
+    if(!fb) {
+      BOOST_LOG(error) << "Couldn't get drm fb for plane ["sv << plane->fb_id << "]: "sv << strerror(errno);
+      return capture_e::error;
+    }
+
+    if(!fb->handles[0]) {
+      BOOST_LOG(error)
+        << "Couldn't get handle for DRM Framebuffer ["sv << plane->fb_id << "]: Possibly not permitted: do [sudo setcap cap_sys_admin+p sunshine]"sv;
+      return capture_e::error;
+    }
+
+    for(int y = 0; y < 4; ++y) {
+      if(!fb->handles[y]) {
+        // It's not clear wheter there could still be valid handles left.
+        // So, continue anyway.
+        // TODO: Is this redundent?
+        continue;
+      }
+
+      file[y] = card.handleFD(fb->handles[y]);
+      if(file[y].el < 0) {
+        BOOST_LOG(error) << "Couldn't get primary file descriptor for Framebuffer ["sv << fb->fb_id << "]: "sv << strerror(errno);
+        return capture_e::error;
+      }
+
+      sd->fds[y]     = file[y].el;
+      sd->offsets[y] = fb->offsets[y];
+      sd->pitches[y] = fb->pitches[y];
+    }
+
+    sd->width    = fb->width;
+    sd->height   = fb->height;
+    sd->modifier = fb->modifier;
+    sd->fourcc   = fb->pixel_format;
+
+    if(
+      fb->width != img_width ||
+      fb->height != img_height) {
+      return capture_e::reinit;
+    }
+
+    return capture_e::ok;
+  }
+
+  mem_type_e mem_type;
+
+  std::chrono::nanoseconds delay;
 
   int img_width, img_height;
-  int pitch;
+  int img_offset_x, img_offset_y;
+
+  int plane_id;
 
   card_t card;
-  file_t fb_fd;
 
   std::optional<x11::cursor_t> cursor_opt;
-
-  util::TaskPool::task_id_t loop_id;
-  util::ThreadPool thread_pool;
 };
 
 class display_ram_t : public display_t {
@@ -441,25 +653,10 @@ public:
 
     ctx = std::move(*ctx_opt);
 
-    auto rgb_opt = egl::import_source(display.get(),
-      {
-        fb_fd.el,
-        img_width,
-        img_height,
-        0,
-        pitch,
-      });
-
-    if(!rgb_opt) {
-      return -1;
-    }
-
-    rgb = std::move(*rgb_opt);
-
     return 0;
   }
 
-  capture_e capture(snapshot_cb_t &&snapshot_cb, std::shared_ptr<img_t> img, bool *cursor) {
+  capture_e capture(snapshot_cb_t &&snapshot_cb, std::shared_ptr<img_t> img, bool *cursor) override {
     auto next_frame = std::chrono::steady_clock::now();
 
     while(img) {
@@ -469,6 +666,7 @@ public:
         std::this_thread::sleep_for((next_frame - now) / 3 * 2);
       }
       while(next_frame > now) {
+        std::this_thread::sleep_for(1ns);
         now = std::chrono::steady_clock::now();
       }
       next_frame = now + delay;
@@ -495,21 +693,38 @@ public:
 
   std::shared_ptr<hwdevice_t> make_hwdevice(pix_fmt_e pix_fmt) override {
     if(mem_type == mem_type_e::vaapi) {
-      return va::make_hwdevice(width, height);
+      return va::make_hwdevice(width, height, false);
     }
 
     return std::make_shared<hwdevice_t>();
   }
 
   capture_e snapshot(img_t *img_out_base, std::chrono::milliseconds timeout, bool cursor) {
-    gl::ctx.BindTexture(GL_TEXTURE_2D, rgb->tex[0]);
-    gl::ctx.GetTextureSubImage(rgb->tex[0], 0, offset_x, offset_y, 0, width, height, 1, GL_BGRA, GL_UNSIGNED_BYTE, img_out_base->height * img_out_base->row_pitch, img_out_base->data);
+    file_t fb_fd[4];
 
-    if(cursor_opt && cursor) {
-      cursor_opt->blend(*img_out_base, offset_x, offset_y);
+    egl::surface_descriptor_t sd;
+
+    auto status = refresh(fb_fd, &sd);
+    if(status != capture_e::ok) {
+      return status;
     }
 
-    return status;
+    auto rgb_opt = egl::import_source(display.get(), sd);
+
+    if(!rgb_opt) {
+      return capture_e::error;
+    }
+
+    auto &rgb = *rgb_opt;
+
+    gl::ctx.BindTexture(GL_TEXTURE_2D, rgb->tex[0]);
+    gl::ctx.GetTextureSubImage(rgb->tex[0], 0, img_offset_x, img_offset_y, 0, width, height, 1, GL_BGRA, GL_UNSIGNED_BYTE, img_out_base->height * img_out_base->row_pitch, img_out_base->data);
+
+    if(cursor_opt && cursor) {
+      cursor_opt->blend(*img_out_base, img_offset_x, img_offset_y);
+    }
+
+    return capture_e::ok;
   }
 
   std::shared_ptr<img_t> alloc_img() override {
@@ -524,15 +739,12 @@ public:
   }
 
   int dummy_img(platf::img_t *img) override {
-    snapshot(img, 1s, false);
     return 0;
   }
 
   gbm::gbm_t gbm;
   egl::display_t display;
   egl::ctx_t ctx;
-
-  egl::rgb_t rgb;
 };
 
 class display_vram_t : public display_t {
@@ -541,14 +753,7 @@ public:
 
   std::shared_ptr<hwdevice_t> make_hwdevice(pix_fmt_e pix_fmt) override {
     if(mem_type == mem_type_e::vaapi) {
-      return va::make_hwdevice(width, height, dup(card.fd.el), offset_x, offset_y,
-        {
-          fb_fd.el,
-          img_width,
-          img_height,
-          0,
-          pitch,
-        });
+      return va::make_hwdevice(width, height, dup(card.fd.el), img_offset_x, img_offset_y, true);
     }
 
     BOOST_LOG(error) << "Unsupported pixel format for egl::display_vram_t: "sv << platf::from_pix_fmt(pix_fmt);
@@ -556,17 +761,20 @@ public:
   }
 
   std::shared_ptr<img_t> alloc_img() override {
-    auto img = std::make_shared<egl::cursor_t>();
+    auto img = std::make_shared<egl::img_descriptor_t>();
 
     img->serial      = std::numeric_limits<decltype(img->serial)>::max();
     img->data        = nullptr;
     img->pixel_pitch = 4;
 
+    img->sequence = 0;
+    std::fill_n(img->sd.fds, 4, -1);
+
     return img;
   }
 
   int dummy_img(platf::img_t *img) override {
-    return 0;
+    return snapshot(img, 1s, false) != capture_e::ok;
   }
 
   capture_e capture(snapshot_cb_t &&snapshot_cb, std::shared_ptr<img_t> img, bool *cursor) {
@@ -579,6 +787,7 @@ public:
         std::this_thread::sleep_for((next_frame - now) / 3 * 2);
       }
       while(next_frame > now) {
+        std::this_thread::sleep_for(1ns);
         now = std::chrono::steady_clock::now();
       }
       next_frame = now + delay;
@@ -604,18 +813,36 @@ public:
   }
 
   capture_e snapshot(img_t *img_out_base, std::chrono::milliseconds /* timeout */, bool cursor) {
+    file_t fb_fd[4];
+
+    auto img = (egl::img_descriptor_t *)img_out_base;
+    img->reset();
+
+    auto status = refresh(fb_fd, &img->sd);
+    if(status != capture_e::ok) {
+      return status;
+    }
+
+    img->sequence = ++sequence;
+
     if(!cursor || !cursor_opt) {
       img_out_base->data = nullptr;
+
+      for(auto x = 0; x < 4; ++x) {
+        fb_fd[x].release();
+      }
       return capture_e::ok;
     }
 
-    auto img = (egl::cursor_t *)img_out_base;
     cursor_opt->capture(*img);
 
     img->x -= offset_x;
     img->y -= offset_y;
 
-    return status;
+    for(auto x = 0; x < 4; ++x) {
+      fb_fd[x].release();
+    }
+    return capture_e::ok;
   }
 
   int init(const std::string &display_name, int framerate) {
@@ -628,9 +855,14 @@ public:
       return -1;
     }
 
+    sequence = 0;
+
     return 0;
   }
+
+  std::uint64_t sequence;
 };
+
 } // namespace kms
 
 std::shared_ptr<display_t> kms_display(mem_type_e hwdevice_type, const std::string &display_name, int framerate) {
@@ -653,18 +885,83 @@ std::shared_ptr<display_t> kms_display(mem_type_e hwdevice_type, const std::stri
   return disp;
 }
 
+
+/**
+ * On Wayland, it's not possible to determine the position of the monitor on the desktop with KMS.
+ * Wayland does allow applications to query attached monitors on the desktop,
+ * however, the naming scheme is not standardized across implementations.
+ * 
+ * As a result, correlating the KMS output to the wayland outputs is guess work at best.
+ * But, it's necessary for absolute mouse coordinates to work.
+ * 
+ * This is an ugly hack :(
+ */
+void correlate_to_wayland(std::vector<kms::card_descriptor_t> &cds) {
+  auto monitors = wl::monitors();
+
+  for(auto &monitor : monitors) {
+    std::string_view name = monitor->name;
+
+    BOOST_LOG(info) << name << ": "sv << monitor->description;
+
+    // Try to convert names in the format:
+    // {type}-{index}
+    // {index} is n'th occurence of {type}
+    auto index_begin = name.find_last_of('-');
+
+    std::uint32_t index;
+    if(index_begin == std::string_view::npos) {
+      index = 1;
+    }
+    else {
+      index = std::max<int64_t>(1, util::from_view(name.substr(index_begin + 1)));
+    }
+
+    auto type = kms::from_view(name.substr(0, index_begin));
+
+    for(auto &card_descriptor : cds) {
+      for(auto &[_, monitor_descriptor] : card_descriptor.crtc_to_monitor) {
+        if(monitor_descriptor.index == index && monitor_descriptor.type == type) {
+          monitor_descriptor.viewport.offset_x = monitor->viewport.offset_x;
+          monitor_descriptor.viewport.offset_y = monitor->viewport.offset_y;
+
+          // A sanity check, it's guesswork after all.
+          if(
+            monitor_descriptor.viewport.width != monitor->viewport.width ||
+            monitor_descriptor.viewport.height != monitor->viewport.height) {
+            BOOST_LOG(warning)
+              << "Mismatch on expected Resolution compared to actual resolution: "sv
+              << monitor_descriptor.viewport.width << 'x' << monitor_descriptor.viewport.height
+              << " vs "sv
+              << monitor->viewport.width << 'x' << monitor->viewport.height;
+          }
+
+          goto break_for_loop;
+        }
+      }
+    }
+  break_for_loop:
+
+    BOOST_LOG(verbose) << "Reduced to name: "sv << name << ": "sv << index;
+  }
+}
+
 // A list of names of displays accepted as display_name
 std::vector<std::string> kms_display_names() {
-  kms::env_width  = 0;
-  kms::env_height = 0;
-
   int count = 0;
+
+  if(!fs::exists("/dev/dri")) {
+    BOOST_LOG(warning) << "Couldn't find /dev/dri, kmsgrab won't be enabled"sv;
+  }
 
   if(!gbm::create_device) {
     BOOST_LOG(warning) << "libgbm not initialized"sv;
     return {};
   }
 
+  kms::conn_type_count_t conn_type_count;
+
+  std::vector<kms::card_descriptor_t> cds;
   std::vector<std::string> display_names;
 
   fs::path card_dir { "/dev/dri"sv };
@@ -681,6 +978,8 @@ std::vector<std::string> kms_display_names() {
       return {};
     }
 
+    auto crtc_to_monitor = kms::map_crtc_to_monitor(card.monitors(conn_type_count));
+
     auto end = std::end(card);
     for(auto plane = std::begin(card); plane != end; ++plane) {
       auto fb = card.fb(plane.get());
@@ -689,36 +988,14 @@ std::vector<std::string> kms_display_names() {
         continue;
       }
 
-      if(!fb->handle) {
+      if(!fb->handles[0]) {
         BOOST_LOG(error)
-          << "Couldn't get handle for DRM Framebuffer ["sv << plane->fb_id << "]: Possibly not permitted: do [sudo setcap cap_sys_admin+ep sunshine]"sv;
+          << "Couldn't get handle for DRM Framebuffer ["sv << plane->fb_id << "]: Possibly not permitted: do [sudo setcap cap_sys_admin+p sunshine]"sv;
         break;
       }
 
-      bool cursor = false;
-      {
-        BOOST_LOG(verbose) << "PLANE INFO ["sv << count << ']';
-        auto props = card.plane_props(plane->plane_id);
-        for(auto &[prop, val] : props) {
-          if(prop->name == "type"sv) {
-            BOOST_LOG(verbose) << prop->name << "::"sv << kms::plane_type(val);
-
-            if(val == DRM_PLANE_TYPE_CURSOR) {
-              cursor = true;
-            }
-          }
-          else {
-            BOOST_LOG(verbose) << prop->name << "::"sv << val;
-          }
-        }
-      }
-
-      {
-        BOOST_LOG(verbose) << "CRTC INFO"sv;
-        auto props = card.crtc_props(plane->crtc_id);
-        for(auto &[prop, val] : props) {
-          BOOST_LOG(verbose) << prop->name << "::"sv << val;
-        }
+      if(card.is_cursor(plane->plane_id)) {
+        continue;
       }
 
       // This appears to return the offset of the monitor
@@ -728,16 +1005,52 @@ std::vector<std::string> kms_display_names() {
         return {};
       }
 
+      auto it = crtc_to_monitor.find(plane->crtc_id);
+      if(it != std::end(crtc_to_monitor)) {
+        it->second.viewport = platf::touch_port_t {
+          (int)crtc->x,
+          (int)crtc->y,
+          (int)crtc->width,
+          (int)crtc->height,
+        };
+      }
+
       kms::env_width  = std::max(kms::env_width, (int)(crtc->x + crtc->width));
       kms::env_height = std::max(kms::env_height, (int)(crtc->y + crtc->height));
 
       kms::print(plane.get(), fb.get(), crtc.get());
 
-      if(!cursor) {
-        display_names.emplace_back(std::to_string(count++));
-      }
+      display_names.emplace_back(std::to_string(count++));
+    }
+
+    cds.emplace_back(kms::card_descriptor_t {
+      std::move(file),
+      std::move(crtc_to_monitor),
+    });
+  }
+
+  if(!wl::init()) {
+    correlate_to_wayland(cds);
+  }
+
+  // Deduce the full virtual desktop size
+  kms::env_width  = 0;
+  kms::env_height = 0;
+
+  for(auto &card_descriptor : cds) {
+    for(auto &[_, monitor_descriptor] : card_descriptor.crtc_to_monitor) {
+      BOOST_LOG(debug) << "Monitor description"sv;
+      BOOST_LOG(debug) << "Resolution: "sv << monitor_descriptor.viewport.width << 'x' << monitor_descriptor.viewport.height;
+      BOOST_LOG(debug) << "Offset: "sv << monitor_descriptor.viewport.offset_x << 'x' << monitor_descriptor.viewport.offset_y;
+
+      kms::env_width  = std::max(kms::env_width, (int)(monitor_descriptor.viewport.offset_x + monitor_descriptor.viewport.width));
+      kms::env_height = std::max(kms::env_height, (int)(monitor_descriptor.viewport.offset_y + monitor_descriptor.viewport.height));
     }
   }
+
+  BOOST_LOG(debug) << "Desktop resolution: "sv << kms::env_width << 'x' << kms::env_height;
+
+  kms::card_descriptors = std::move(cds);
 
   return display_names;
 }

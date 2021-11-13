@@ -4,15 +4,6 @@ project(Sunshine)
 
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
-add_subdirectory(third-party/Simple-Web-Server)
-
-set(UPNPC_BUILD_SHARED OFF CACHE BOOL "no shared libraries")
-set(UPNPC_BUILD_TESTS OFF CACHE BOOL "Don't build tests for miniupnpc")
-set(UPNPC_BUILD_SAMPLE OFF CACHE BOOL "Don't build samples for miniupnpc")
-set(UPNPC_NO_INSTALL ON CACHE BOOL "Don't install any libraries build for miniupnpc")
-add_subdirectory(third-party/miniupnp/miniupnpc)
-include_directories(third-party/miniupnp)
-
 if(WIN32)
 	# Ugly hack to compile with #include <qos2.h>
 	add_compile_definitions(
@@ -35,14 +26,29 @@ if(APPLE)
     endif()
 	endmacro(ADD_FRAMEWORK)
 endif()
+
 add_subdirectory(third-party/moonlight-common-c/enet)
+add_subdirectory(third-party/Simple-Web-Server)
+
+set(UPNPC_BUILD_SHARED OFF CACHE BOOL "no shared libraries")
+set(UPNPC_BUILD_TESTS OFF CACHE BOOL "Don't build tests for miniupnpc")
+set(UPNPC_BUILD_SAMPLE OFF CACHE BOOL "Don't build samples for miniupnpc")
+set(UPNPC_NO_INSTALL ON CACHE BOOL "Don't install any libraries build for miniupnpc")
+add_subdirectory(third-party/miniupnp/miniupnpc)
+include_directories(third-party/miniupnp)
 
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
+if(!APPLE)
+	set(Boost_USE_STATIC_LIBS ON)
+endif()
+find_package(Boost COMPONENTS log filesystem REQUIRED)
 
-list(APPEND SUNSHINE_COMPILE_OPTIONS -fPIC -Wall -Wno-missing-braces -Wno-maybe-uninitialized -Wno-sign-compare)
+list(APPEND SUNSHINE_COMPILE_OPTIONS -Wall -Wno-missing-braces -Wno-maybe-uninitialized -Wno-sign-compare)
 
 if(WIN32)
+	enable_language(RC)
+	set(CMAKE_RC_COMPILER windres)
 	file(
 		DOWNLOAD "https://github.com/TheElixZammuto/sunshine-prebuilt/releases/download/1.0.0/pre-compiled.zip" "${CMAKE_CURRENT_BINARY_DIR}/pre-compiled.zip"
 		TIMEOUT 60
@@ -64,7 +70,12 @@ if(WIN32)
 
 	include_directories(third-party/ViGEmClient/include)
 
+	if(NOT DEFINED SUNSHINE_ICON_PATH)
+		set(SUNSHINE_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/sunshine.ico")
+	endif()
+	configure_file(sunshine/platform/windows/windows.rs.in windows.rc @ONLY)
 	set(PLATFORM_TARGET_FILES
+		"${CMAKE_CURRENT_BINARY_DIR}/windows.rc"
 		sunshine/platform/windows/publish.cpp
 		sunshine/platform/windows/misc.h
 		sunshine/platform/windows/misc.cpp
@@ -159,12 +170,40 @@ else()
 
 	option(SUNSHINE_ENABLE_DRM "Enable KMS grab if available" ON)
 	option(SUNSHINE_ENABLE_X11 "Enable X11 grab if available" ON)
+	option(SUNSHINE_ENABLE_WAYLAND "Enable building wayland specific code" ON)
+	option(SUNSHINE_ENABLE_CUDA "Enable cuda specific code" ON)
 
 	if(${SUNSHINE_ENABLE_X11})
 		find_package(X11)
+	else()
+		set(X11_FOUND OFF)
+	endif()
+
+	set(CUDA_FOUND OFF)
+	if(${SUNSHINE_ENABLE_CUDA})
+		include(CheckLanguage)
+		check_language(CUDA)
+
+		if(CMAKE_CUDA_COMPILER)
+			if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+				set(CMAKE_CUDA_ARCHITECTURES 35)
+			endif()
+
+			set(CUDA_FOUND ON)
+			enable_language(CUDA)
+		endif()
 	endif()
 	if(${SUNSHINE_ENABLE_DRM})
 		find_package(LIBDRM)
+		find_package(LIBCAP)
+	else()
+		set(LIBDRM_FOUND OFF)
+		set(LIBCAP_FOUND OFF)
+	endif()
+	if(${SUNSHINE_ENABLE_WAYLAND})
+		find_package(Wayland)
+	else()
+		set(WAYLAND_FOUND OFF)
 	endif()
 
 	find_package(FFMPEG REQUIRED)
@@ -174,21 +213,75 @@ else()
 		include_directories(${X11_INCLUDE_DIR})
 		list(APPEND PLATFORM_TARGET_FILES sunshine/platform/linux/x11grab.cpp)
 	endif()
-	if(LIBDRM_FOUND)
+
+	if(CUDA_FOUND)
+		include_directories(third-party/nvfbc)
+		list(APPEND PLATFORM_TARGET_FILES
+			sunshine/platform/linux/cuda.cu
+			sunshine/platform/linux/cuda.cpp
+			third-party/nvfbc/NvFBC.h)
+
+			add_compile_definitions(SUNSHINE_BUILD_CUDA)
+	endif()
+
+	if(LIBDRM_FOUND AND LIBCAP_FOUND)
 		add_compile_definitions(SUNSHINE_BUILD_DRM)
-		include_directories(${LIBDRM_INCLUDE_DIRS})
-		list(APPEND PLATFORM_LIBRARIES ${LIBDRM_LIBRARIES})
+		include_directories(${LIBDRM_INCLUDE_DIRS} ${LIBCAP_INCLUDE_DIRS})
+		list(APPEND PLATFORM_LIBRARIES ${LIBDRM_LIBRARIES} ${LIBCAP_LIBRARIES})
 		list(APPEND PLATFORM_TARGET_FILES sunshine/platform/linux/kmsgrab.cpp)
 		list(APPEND SUNSHINE_DEFINITIONS EGL_NO_X11=1)
+	elseif(LIBDRM_FOUND)
+		message(WARNING "Found libdrm, yet there is no libcap")
+	elseif(LIBDRM_FOUND)
+		message(WARNING "Found libcap, yet there is no libdrm")
 	endif()
-	if(NOT X11_FOUND AND NOT LIBDRM_FOUND)
-		message(FATAL "Couldn't find either x11 or libdrm")
+
+	if(WAYLAND_FOUND)
+		add_compile_definitions(SUNSHINE_BUILD_WAYLAND)
+		macro(genWayland FILENAME)
+			make_directory(${CMAKE_BINARY_DIR}/generated-src)
+
+			message("wayland-scanner private-code ${CMAKE_SOURCE_DIR}/third-party/wayland-protocols/${FILENAME}.xml ${CMAKE_BINARY_DIR}/generated-src/${FILENAME}.c")
+			message("wayland-scanner client-header ${CMAKE_SOURCE_DIR}/third-party/wayland-protocols/${FILENAME}.xml ${CMAKE_BINARY_DIR}/generated-src/${FILENAME}.h")
+			execute_process(
+				COMMAND wayland-scanner private-code ${CMAKE_SOURCE_DIR}/third-party/wayland-protocols/${FILENAME}.xml ${CMAKE_BINARY_DIR}/generated-src/${FILENAME}.c
+				COMMAND wayland-scanner client-header ${CMAKE_SOURCE_DIR}/third-party/wayland-protocols/${FILENAME}.xml ${CMAKE_BINARY_DIR}/generated-src/${FILENAME}.h
+
+				RESULT_VARIABLE EXIT_INT
+			)
+
+			if(NOT ${EXIT_INT} EQUAL 0)
+				message(FATAL_ERROR "wayland-scanner failed")
+			endif()
+
+			list(APPEND PLATFORM_TARGET_FILES
+				${CMAKE_BINARY_DIR}/generated-src/${FILENAME}.c
+				${CMAKE_BINARY_DIR}/generated-src/${FILENAME}.h
+			)
+		endmacro()
+
+		genWayland(xdg-output-unstable-v1)
+		genWayland(wlr-export-dmabuf-unstable-v1)
+
+		include_directories(
+			${WAYLAND_INCLUDE_DIRS}
+			${CMAKE_BINARY_DIR}/generated-src
+		)
+
+		list(APPEND PLATFORM_LIBRARIES ${WAYLAND_LIBRARIES})
+		list(APPEND PLATFORM_TARGET_FILES
+			sunshine/platform/linux/wlgrab.cpp
+			sunshine/platform/linux/wayland.cpp)
+	endif()
+	if(NOT ${X11_FOUND} AND NOT (${LIBDRM_FOUND} AND ${LIBCAP_FOUND}) AND NOT ${WAYLAND_FOUND} AND NOT ${})
+		message(FATAL_ERROR "Couldn't find either x11, wayland, cuda or (libdrm and libcap)")
 	endif()
 
 	list(APPEND PLATFORM_TARGET_FILES
 		sunshine/platform/linux/publish.cpp
 		sunshine/platform/linux/vaapi.h
 		sunshine/platform/linux/vaapi.cpp
+		sunshine/platform/linux/cuda.h
 		sunshine/platform/linux/graphics.h
 		sunshine/platform/linux/graphics.cpp
 		sunshine/platform/linux/misc.h
@@ -196,6 +289,7 @@ else()
 		sunshine/platform/linux/audio.cpp
 		sunshine/platform/linux/input.cpp
 		sunshine/platform/linux/x11grab.h
+		sunshine/platform/linux/wayland.h
 		third-party/glad/src/egl.c
 		third-party/glad/src/gl.c
 		third-party/glad/include/EGL/eglplatform.h
@@ -212,6 +306,7 @@ else()
 	
 	include_directories(
 		/usr/include/libevdev-1.0
+		third-party/nv-codec-headers/include
 		third-party/glad/include)
 
 	if(NOT DEFINED SUNSHINE_EXECUTABLE_PATH)
@@ -220,11 +315,6 @@ else()
 	configure_file(gen-deb.in gen-deb @ONLY)
 	configure_file(sunshine.service.in sunshine.service @ONLY)
 endif()
-
-add_subdirectory(third-party/cbs)
-
-#set(Boost_USE_STATIC_LIBS ON)
-find_package(Boost COMPONENTS log filesystem REQUIRED)
 
 set(SUNSHINE_TARGET_FILES
 	third-party/moonlight-common-c/reedsolomon/rs.c
@@ -285,9 +375,11 @@ include_directories(
   ${PLATFORM_INCLUDE_DIRS}
 )
 
+add_subdirectory(third-party/cbs)
+
 string(TOUPPER "x${CMAKE_BUILD_TYPE}" BUILD_TYPE)
 if("${BUILD_TYPE}" STREQUAL "XDEBUG")
-	list(APPEND SUNSHINE_COMPILE_OPTIONS -O0 -pedantic -ggdb3)
+	list(APPEND SUNSHINE_COMPILE_OPTIONS -O0 -ggdb3)
 	if(WIN32)
 		set_source_files_properties(sunshine/nvhttp.cpp PROPERTIES COMPILE_FLAGS -O2)
 	endif()
@@ -322,6 +414,10 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
 		${OPENSSL_LIBRARIES}
 		${PLATFORM_LIBRARIES})
 
+if (NOT WIN32)
+	list(APPEND SUNSHINE_EXTERNAL_LIBRARIES Boost::log)
+endif()
+
 list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ASSETS_DIR="${SUNSHINE_ASSETS_DIR}")
 list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_CONFIG_DIR="${SUNSHINE_CONFIG_DIR}")
 list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_DEFAULT_DIR="${SUNSHINE_DEFAULT_DIR}")
@@ -330,8 +426,17 @@ target_link_libraries(sunshine ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
 target_compile_definitions(sunshine PUBLIC ${SUNSHINE_DEFINITIONS})
 set_target_properties(sunshine PROPERTIES CXX_STANDARD 17)
 
+if(NOT DEFINED CMAKE_CUDA_STANDARD)
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+endif()
+
 if(APPLE)
 	target_link_options(sunshine PRIVATE LINKER:-sectcreate,__TEXT,__info_plist,${CMAKE_CURRENT_SOURCE_DIR}/assets/Info.plist)
 endif()
 
-target_compile_options(sunshine PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
+foreach(flag IN LISTS SUNSHINE_COMPILE_OPTIONS)
+	list(APPEND SUNSHINE_COMPILE_OPTIONS_CUDA "$<$<COMPILE_LANGUAGE:CUDA>:--compiler-options=${flag}>")
+endforeach()
+
+target_compile_options(sunshine PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)

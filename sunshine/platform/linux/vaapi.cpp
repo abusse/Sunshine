@@ -3,8 +3,6 @@
 
 #include <fcntl.h>
 
-#include <glad/egl.h>
-
 extern "C" {
 #include <libavcodec/avcodec.h>
 }
@@ -350,20 +348,20 @@ public:
     auto nv12_opt = egl::import_target(
       display.get(),
       std::move(fds),
-      {
-        prime.objects[prime.layers[0].object_index[0]].fd,
-        (int)prime.width,
+      { (int)prime.width,
         (int)prime.height,
-        (int)prime.layers[0].offset[0],
-        (int)prime.layers[0].pitch[0],
-      },
-      {
-        prime.objects[prime.layers[0].object_index[1]].fd,
-        (int)prime.width / 2,
+        { prime.objects[prime.layers[0].object_index[0]].fd, -1, -1, -1 },
+        0,
+        0,
+        { prime.layers[0].pitch[0] },
+        { prime.layers[0].offset[0] } },
+      { (int)prime.width / 2,
         (int)prime.height / 2,
-        (int)prime.layers[0].offset[1],
-        (int)prime.layers[0].pitch[1],
-      });
+        { prime.objects[prime.layers[0].object_index[1]].fd, -1, -1, -1 },
+        0,
+        0,
+        { prime.layers[0].pitch[1] },
+        { prime.layers[0].offset[1] } });
 
     if(!nv12_opt) {
       return -1;
@@ -404,7 +402,7 @@ public:
   int convert(platf::img_t &img) override {
     sws.load_ram(img);
 
-    sws.convert(nv12);
+    sws.convert(nv12->buf);
     return 0;
   }
 };
@@ -412,26 +410,34 @@ public:
 class va_vram_t : public va_t {
 public:
   int convert(platf::img_t &img) override {
-    sws.load_vram((egl::cursor_t &)img, offset_x, offset_y, framebuffer[0]);
+    auto &descriptor = (egl::img_descriptor_t &)img;
 
-    sws.convert(nv12);
+    if(descriptor.sequence > sequence) {
+      sequence = descriptor.sequence;
+
+      rgb = egl::rgb_t {};
+
+      auto rgb_opt = egl::import_source(display.get(), descriptor.sd);
+
+      if(!rgb_opt) {
+        return -1;
+      }
+
+      rgb = std::move(*rgb_opt);
+    }
+
+    sws.load_vram(descriptor, offset_x, offset_y, rgb->tex[0]);
+
+    sws.convert(nv12->buf);
     return 0;
   }
 
-  int init(int in_width, int in_height, file_t &&render_device, int offset_x, int offset_y, const egl::surface_descriptor_t &sd) {
+  int init(int in_width, int in_height, file_t &&render_device, int offset_x, int offset_y) {
     if(va_t::init(in_width, in_height, std::move(render_device))) {
       return -1;
     }
 
-    auto rgb_opt = egl::import_source(display.get(), sd);
-    if(!rgb_opt) {
-      return -1;
-    }
-
-    rgb = std::move(*rgb_opt);
-
-    framebuffer = gl::frame_buf_t::make(1);
-    framebuffer.bind(std::begin(rgb->tex), std::end(rgb->tex));
+    sequence = 0;
 
     this->offset_x = offset_x;
     this->offset_y = offset_y;
@@ -439,10 +445,8 @@ public:
     return 0;
   }
 
-  file_t fb_fd;
-
+  std::uint64_t sequence;
   egl::rgb_t rgb;
-  gl::frame_buf_t framebuffer;
 
   int offset_x, offset_y;
 };
@@ -607,7 +611,27 @@ bool validate(int fd) {
   return true;
 }
 
-std::shared_ptr<platf::hwdevice_t> make_hwdevice(int width, int height) {
+std::shared_ptr<platf::hwdevice_t> make_hwdevice(int width, int height, file_t &&card, int offset_x, int offset_y, bool vram) {
+  if(vram) {
+    auto egl = std::make_shared<va::va_vram_t>();
+    if(egl->init(width, height, std::move(card), offset_x, offset_y)) {
+      return nullptr;
+    }
+
+    return egl;
+  }
+
+  else {
+    auto egl = std::make_shared<va::va_ram_t>();
+    if(egl->init(width, height, std::move(card))) {
+      return nullptr;
+    }
+
+    return egl;
+  }
+}
+
+std::shared_ptr<platf::hwdevice_t> make_hwdevice(int width, int height, int offset_x, int offset_y, bool vram) {
   auto render_device = config::video.adapter_name.empty() ? "/dev/dri/renderD128" : config::video.adapter_name.c_str();
 
   file_t file = open(render_device, O_RDWR);
@@ -618,20 +642,10 @@ std::shared_ptr<platf::hwdevice_t> make_hwdevice(int width, int height) {
     return nullptr;
   }
 
-  auto egl = std::make_shared<va::va_ram_t>();
-  if(egl->init(width, height, std::move(file))) {
-    return nullptr;
-  }
-
-  return egl;
+  return make_hwdevice(width, height, std::move(file), offset_x, offset_y, vram);
 }
 
-std::shared_ptr<platf::hwdevice_t> make_hwdevice(int width, int height, file_t &&card, int offset_x, int offset_y, const egl::surface_descriptor_t &sd) {
-  auto egl = std::make_shared<va::va_vram_t>();
-  if(egl->init(width, height, std::move(card), offset_x, offset_y, sd)) {
-    return nullptr;
-  }
-
-  return egl;
+std::shared_ptr<platf::hwdevice_t> make_hwdevice(int width, int height, bool vram) {
+  return make_hwdevice(width, height, 0, 0, vram);
 }
 } // namespace va

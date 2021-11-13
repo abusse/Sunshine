@@ -1,3 +1,4 @@
+![Sunshine icon](gamepad.png "Sunshine")
 # Introduction
 Sunshine is a Gamestream host for Moonlight
 
@@ -14,31 +15,47 @@ Sunshine is a Gamestream host for Moonlight
 
 ## Linux
 
+If you do not wish to clutter your PC with development files, yet you want the very latest version...
+You can use these [build scripts](scripts/README.md)
+They make use of docker to handle building Sunshine automatically
+
 ### Requirements:
 
 Ubuntu 20.04:
 Install the following:
-#### X11 Only
+
+#### Common
 ```
-sudo apt install cmake gcc-10 g++-10 libssl-dev libavdevice-dev libboost-thread-dev libboost-filesystem-dev libboost-log-dev libpulse-dev libopus-dev libxtst-dev libx11-dev libxrandr-dev libxfixes-dev libevdev-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev
+sudo apt install cmake gcc-10 g++-10 libssl-dev libavdevice-dev libboost-thread-dev libboost-filesystem-dev libboost-log-dev libpulse-dev libopus-dev libevdev-dev
+```
+#### X11
+```
+sudo apt install libxtst-dev libx11-dev libxrandr-dev libxfixes-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev
 ```
 
-#### X11 + KMS (Requires additional setup)
-KMS allows Sunshine to grab the monitor with lower latency then through X11
+#### KMS
+This requires additional [setup](README.md#Setup).
+```
+sudo apt install libdrm-dev libcap-dev
+```
 
+#### Wayland
+This is for wlroots based compositores, such as Sway
 ```
-sudo apt install cmake gcc-10 g++-10 libssl-dev libavdevice-dev libboost-thread-dev libboost-filesystem-dev libboost-log-dev libpulse-dev libopus-dev libxtst-dev libx11-dev libxrandr-dev libxfixes-dev libevdev-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev libdrm-dev
+sudo apt install libwayland-dev
 ```
+
+#### Cuda + NvFBC
+This requires proprietary software
+On Ubuntu 20.04, the cuda compiler will fail since it's version is too old, it's recommended you compile the sources with the [build scripts](scripts/README.md)
+```
+sudo apt install nvidia-cuda-dev nvidia-cuda-toolkit
+```
+
+#### Warning:
+You might require ffmpeg version >= 4.3. Check the troubleshooting section for more information.
 
 ### Compilation:
-
-#### X11 Only
-- `git clone https://github.com/loki-47-6F-64/sunshine.git --recurse-submodules`
-- `cd sunshine && mkdir build && cd build`
-- `cmake -DCMAKE_C_COMPILER=gcc-10 -DCMAKE_CXX_COMPILER=g++-10 -DSUNSHINE_ENABLE_DRM=OFF ..`
-- `make -j ${nproc}`
-
-#### X11 + KMS
 - `git clone https://github.com/loki-47-6F-64/sunshine.git --recurse-submodules`
 - `cd sunshine && mkdir build && cd build`
 - `cmake -DCMAKE_C_COMPILER=gcc-10 -DCMAKE_CXX_COMPILER=g++-10 ..`
@@ -73,16 +90,24 @@ sunshine needs access to uinput to create mouse and gamepad events:
 #### Additional Setup for KMS:
 Please note that `cap_sys_admin` may as well be root, except you don't need to be root to run it.
 It's necessary to allow Sunshine to use KMS
-- `sudo setcap cap_sys_admin+ep sunshine`
+- `sudo setcap cap_sys_admin+p sunshine`
 
 ### Trouleshooting:
 - If you get "Could not create Sunshine Gamepad: Permission Denied", ensure you are part of the group "input":
 	- `groups $USER`
 	
 - If Sunshine sends audio from the microphone instead of the speaker, try the following steps:
- 	1. `$ pacmd list-sources | grep "name:"` or `$ pactl info | grep Source` if running pipewire.
+	1. Check whether you're using Pulseaudio or Pipewire
+		- Pulseaudio: Use `pacmd list-sources | grep "name:"`
+		- Pipewire: Use `pactl info | grep Source`. In some causes you'd need to use the `sink` device. Try `pactl info | grep Sink`, if _Source_ doesn't work.
 	2. Copy the name to the configuration option "audio_sink"
-	3. restart sunshine
+	3. Restart sunshine
+
+- If you get "Error: Failed to create client: Daemon not running", ensure that your avahi-daemon is running:
+	- `systemctl status avahi-daemon`
+
+- If you use hardware acceleration on Linux using an Intel or an AMD GPU (with VAAPI), you will get tons of [graphical issues](https://github.com/loki-47-6F-64/sunshine/issues/228) if your ffmpeg version is < 4.3. If it is not available in your distribution's repositories, consider using a newer version of your distribution.
+	- Ubuntu started to ship ffmpeg 4.3 starting with groovy (20.10). If you're using an older version, you could use [this PPA](https://launchpad.net/%7Esavoury1/+archive/ubuntu/ffmpeg4) instead of upgrading. **Using PPAs is dangerous and may break your system. Use it at your own risk.**
 
 ## macOS
 
@@ -137,7 +162,7 @@ If cmake fails complaining to find Boost, try to set the path explicitly: `cmake
 
 First you need to install [MSYS2](https://www.msys2.org), then startup "MSYS2 MinGW 64-bit" and install the following packages using `pacman -S`:
 
-	mingw-w64-x86_64-openssl mingw-w64-x86_64-cmake mingw-w64-x86_64-toolchain mingw-w64-x86_64-opus mingw-w64-x86_64-x265 mingw-w64-x86_64-boost git mingw-w64-x86_64-make cmake make gcc
+	mingw-w64-x86_64-binutils mingw-w64-x86_64-openssl mingw-w64-x86_64-cmake mingw-w64-x86_64-toolchain mingw-w64-x86_64-opus mingw-w64-x86_64-x265 mingw-w64-x86_64-boost git mingw-w64-x86_64-make cmake make gcc
 
 ### Compilation:
 - `git clone https://github.com/loki-47-6F-64/sunshine.git --recursive`
@@ -177,6 +202,7 @@ All shortcuts start with CTRL + ALT + SHIFT, just like Moonlight
 - [Moonlight](https://github.com/moonlight-stream)
 - [Looking-Glass](https://github.com/gnif/LookingGlass) (For showing me how to properly capture frames on Windows, saving me a lot of time :)
 - [Eretik](http://eretik.omegahg.com/) (For creating PolicyConfig.h, allowing me to change the default audio device on Windows programmatically)
+- [Twitter emoji](https://github.com/twitter/twemoji/blob/master/LICENSE-GRAPHICS) (Sunshine's icon is made of twemoji)
 
 ## Application List:
 **Note:** You can change the Application List in the "Apps" section of the User Interface `https://xxx.xxx.xxx.xxx:47990/`

@@ -187,7 +187,7 @@ std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type, const std::s
   return display;
 }
 
-std::vector<std::string> display_names() {
+std::vector<std::string> display_names(mem_type_e hwdevice_type) {
   __block std::vector<std::string> display_names;
 
   auto display_array = [AVVideo displayNames];

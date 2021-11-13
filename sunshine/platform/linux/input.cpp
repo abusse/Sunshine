@@ -51,8 +51,8 @@ struct keycode_t {
 
 constexpr auto UNKNOWN = 0;
 
-static constexpr std::array<keycode_t, 0xDF> init_keycodes() {
-  std::array<keycode_t, 0xDF> keycodes {};
+static constexpr std::array<keycode_t, 0xE3> init_keycodes() {
+  std::array<keycode_t, 0xE3> keycodes {};
 
 #define __CONVERT(wincode, linuxcode, scancode)                                       \
   static_assert(wincode < keycodes.size(), "Keycode doesn't fit into keycode array"); \
@@ -182,6 +182,7 @@ static constexpr std::array<keycode_t, 0xDF> init_keycodes() {
   __CONVERT(0xDC /* VKEY_OEM_5 */, KEY_BACKSLASH, 0x70031);
   __CONVERT(0xDD /* VKEY_OEM_6 */, KEY_RIGHTBRACE, 0x70030);
   __CONVERT(0xDE /* VKEY_OEM_7 */, KEY_APOSTROPHE, 0x70034);
+  __CONVERT(0xE2 /* VKEY_NON_US_BACKSLASH */, KEY_102ND, 0x70064);
 #undef __CONVERT
 
   return keycodes;
@@ -695,7 +696,13 @@ public:
 };
 
 inline void rumbleIterate(std::vector<effect_t> &effects, std::vector<pollfd_t> &polls, std::chrono::milliseconds to) {
-  auto res = poll(&polls.data()->el, polls.size(), to.count());
+  std::vector<pollfd> polls_tmp;
+  polls_tmp.reserve(polls.size());
+  for(auto &poll : polls) {
+    polls_tmp.emplace_back(poll.el);
+  }
+
+  auto res = poll(polls_tmp.data(), polls.size(), to.count());
 
   // If timed out
   if(!res) {
@@ -870,7 +877,7 @@ void broadcastRumble(safe::queue_t<mail_evdev_t> &rumble_queue_queue) {
     }
 
     if(polls.empty()) {
-      std::this_thread::sleep_for(50ms);
+      std::this_thread::sleep_for(250ms);
     }
     else {
       rumbleIterate(effects, polls, 100ms);
@@ -985,7 +992,7 @@ void keyboard(input_t &input, uint16_t modcode, bool release) {
   keycode.pressed = 1;
 }
 
-int alloc_gamepad(input_t &input, int nr, rumble_queue_t &&rumble_queue) {
+int alloc_gamepad(input_t &input, int nr, rumble_queue_t rumble_queue) {
   return ((input_raw_t *)input.get())->alloc_gamepad(nr, std::move(rumble_queue));
 }
 

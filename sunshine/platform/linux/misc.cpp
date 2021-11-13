@@ -23,6 +23,8 @@
 using namespace std::literals;
 namespace fs = std::filesystem;
 
+window_system_e window_system;
+
 namespace dyn {
 void *handle(const std::vector<const char *> &libs) {
   void *handle;
@@ -138,15 +140,43 @@ std::string get_mac_address(const std::string_view &address) {
   return "00:00:00:00:00:00"s;
 }
 
-enum class source_e {
+namespace source {
+enum source_e : std::size_t {
+#ifdef SUNSHINE_BUILD_CUDA
+  NVFBC,
+#endif
+#ifdef SUNSHINE_BUILD_WAYLAND
+  WAYLAND,
+#endif
 #ifdef SUNSHINE_BUILD_DRM
   KMS,
 #endif
 #ifdef SUNSHINE_BUILD_X11
   X11,
 #endif
+  MAX_FLAGS
 };
-static source_e source;
+} // namespace source
+
+static std::bitset<source::MAX_FLAGS> sources;
+
+#ifdef SUNSHINE_BUILD_CUDA
+std::vector<std::string> nvfbc_display_names();
+std::shared_ptr<display_t> nvfbc_display(mem_type_e hwdevice_type, const std::string &display_name, int framerate);
+
+bool verify_nvfbc() {
+  return !nvfbc_display_names().empty();
+}
+#endif
+
+#ifdef SUNSHINE_BUILD_WAYLAND
+std::vector<std::string> wl_display_names();
+std::shared_ptr<display_t> wl_display(mem_type_e hwdevice_type, const std::string &display_name, int framerate);
+
+bool verify_wl() {
+  return window_system == window_system_e::WAYLAND && !wl_display_names().empty();
+}
+#endif
 
 #ifdef SUNSHINE_BUILD_DRM
 std::vector<std::string> kms_display_names();
@@ -162,36 +192,52 @@ std::vector<std::string> x11_display_names();
 std::shared_ptr<display_t> x11_display(mem_type_e hwdevice_type, const std::string &display_name, int framerate);
 
 bool verify_x11() {
-  return !x11_display_names().empty();
+  return window_system == window_system_e::X11 && !x11_display_names().empty();
 }
 #endif
 
-std::vector<std::string> display_names() {
-  switch(source) {
+std::vector<std::string> display_names(mem_type_e hwdevice_type) {
+#ifdef SUNSHINE_BUILD_CUDA
+  // display using NvFBC only supports mem_type_e::cuda
+  if(sources[source::NVFBC] && hwdevice_type == mem_type_e::cuda) return nvfbc_display_names();
+#endif
+#ifdef SUNSHINE_BUILD_WAYLAND
+  if(sources[source::WAYLAND]) return wl_display_names();
+#endif
 #ifdef SUNSHINE_BUILD_DRM
-  case source_e::KMS:
-    return kms_display_names();
+  if(sources[source::KMS]) return kms_display_names();
 #endif
 #ifdef SUNSHINE_BUILD_X11
-  case source_e::X11:
-    return x11_display_names();
+  if(sources[source::X11]) return x11_display_names();
 #endif
-  }
-
   return {};
 }
 
 std::shared_ptr<display_t> display(mem_type_e hwdevice_type, const std::string &display_name, int framerate) {
-  switch(source) {
+#ifdef SUNSHINE_BUILD_CUDA
+  if(sources[source::NVFBC] && hwdevice_type == mem_type_e::cuda) {
+    BOOST_LOG(info) << "Screencasting with NvFBC"sv;
+    return nvfbc_display(hwdevice_type, display_name, framerate);
+  }
+#endif
+#ifdef SUNSHINE_BUILD_WAYLAND
+  if(sources[source::WAYLAND]) {
+    BOOST_LOG(info) << "Screencasting with Wayland's protocol"sv;
+    return wl_display(hwdevice_type, display_name, framerate);
+  }
+#endif
 #ifdef SUNSHINE_BUILD_DRM
-  case source_e::KMS:
+  if(sources[source::KMS]) {
+    BOOST_LOG(info) << "Screencasting with KMS"sv;
     return kms_display(hwdevice_type, display_name, framerate);
+  }
 #endif
 #ifdef SUNSHINE_BUILD_X11
-  case source_e::X11:
+  if(sources[source::X11]) {
+    BOOST_LOG(info) << "Screencasting with X11"sv;
     return x11_display(hwdevice_type, display_name, framerate);
-#endif
   }
+#endif
 
   return nullptr;
 }
@@ -201,26 +247,52 @@ std::unique_ptr<deinit_t> init() {
   gbm::init();
   va::init();
 
+  window_system = window_system_e::NONE;
+#ifdef SUNSHINE_BUILD_WAYLAND
+  if(std::getenv("WAYLAND_DISPLAY")) {
+    window_system = window_system_e::WAYLAND;
+  }
+#endif
+#if defined(SUNSHINE_BUILD_X11) || defined(SUNSHINE_BUILD_CUDA)
+  if(std::getenv("DISPLAY") && window_system != window_system_e::WAYLAND) {
+    if(std::getenv("WAYLAND_DISPLAY")) {
+      BOOST_LOG(warning) << "Wayland detected, yet sunshine will use X11 for screencasting, screencasting will only work on XWayland applications"sv;
+    }
+
+    window_system = window_system_e::X11;
+  }
+#endif
+#ifdef SUNSHINE_BUILD_CUDA
+  if(verify_nvfbc()) {
+    sources[source::NVFBC] = true;
+  }
+#endif
+#ifdef SUNSHINE_BUILD_WAYLAND
+  if(verify_wl()) {
+    sources[source::WAYLAND] = true;
+  }
+#endif
 #ifdef SUNSHINE_BUILD_DRM
   if(verify_kms()) {
-    BOOST_LOG(info) << "Using KMS for screencasting"sv;
-    source = source_e::KMS;
-    goto found_source;
+    if(window_system == window_system_e::WAYLAND) {
+      // On Wayland, using KMS, the cursor is unreliable.
+      // Hide it by default
+      display_cursor = false;
+    }
+
+    sources[source::KMS] = true;
   }
 #endif
 #ifdef SUNSHINE_BUILD_X11
   if(verify_x11()) {
-    BOOST_LOG(info) << "Using X11 for screencasting"sv;
-    source = source_e::X11;
-    goto found_source;
+    sources[source::X11] = true;
   }
 #endif
-  // Did not find a source
-  return nullptr;
 
-// Normally, I would simply use if-else statements to achieve this result,
-// but due to the macro's, (*spits on ground*), it would be too messy
-found_source:
+  if(sources.none()) {
+    return nullptr;
+  }
+
   if(!gladLoaderLoadEGL(EGL_NO_DISPLAY) || !eglGetPlatformDisplay) {
     BOOST_LOG(warning) << "Couldn't load EGL library"sv;
   }

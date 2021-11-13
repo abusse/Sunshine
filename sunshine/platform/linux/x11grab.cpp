@@ -20,6 +20,7 @@
 #include "sunshine/main.h"
 #include "sunshine/task_pool.h"
 
+#include "cuda.h"
 #include "graphics.h"
 #include "misc.h"
 #include "vaapi.h"
@@ -259,9 +260,8 @@ void freeX(XFixesCursorImage *);
 using xcb_connect_t = util::dyn_safe_ptr<xcb_connection_t, &xcb::disconnect>;
 using xcb_img_t     = util::c_ptr<xcb_shm_get_image_reply_t>;
 
-using xdisplay_t = util::dyn_safe_ptr_v2<Display, int, &x11::CloseDisplay>;
-using ximg_t     = util::safe_ptr<XImage, freeImage>;
-using xcursor_t  = util::safe_ptr<XFixesCursorImage, freeX>;
+using ximg_t    = util::safe_ptr<XImage, freeImage>;
+using xcursor_t = util::safe_ptr<XFixesCursorImage, freeX>;
 
 using crtc_info_t   = util::dyn_safe_ptr<_XRRCrtcInfo, &x11::rr::FreeCrtcInfo>;
 using output_info_t = util::dyn_safe_ptr<_XRROutputInfo, &x11::rr::FreeOutputInfo>;
@@ -366,7 +366,7 @@ static void blend_cursor(Display *display, img_t &img, int offsetX, int offsetY)
 struct x11_attr_t : public display_t {
   std::chrono::nanoseconds delay;
 
-  xdisplay_t xdisplay;
+  x11::xdisplay_t xdisplay;
   Window xwindow;
   XWindowAttributes xattr;
 
@@ -421,14 +421,21 @@ struct x11_attr_t : public display_t {
         return -1;
       }
 
-      crtc_info_t crt_info { x11::rr::GetCrtcInfo(xdisplay.get(), screenr.get(), result->crtc) };
-      BOOST_LOG(info)
-        << "Streaming display: "sv << result->name << " with res "sv << crt_info->width << 'x' << crt_info->height << " offset by "sv << crt_info->x << 'x' << crt_info->y;
+      if(result->crtc) {
+        crtc_info_t crt_info { x11::rr::GetCrtcInfo(xdisplay.get(), screenr.get(), result->crtc) };
+        BOOST_LOG(info)
+          << "Streaming display: "sv << result->name << " with res "sv << crt_info->width << 'x' << crt_info->height << " offset by "sv << crt_info->x << 'x' << crt_info->y;
 
-      width    = crt_info->width;
-      height   = crt_info->height;
-      offset_x = crt_info->x;
-      offset_y = crt_info->y;
+        width    = crt_info->width;
+        height   = crt_info->height;
+        offset_x = crt_info->x;
+        offset_y = crt_info->y;
+      }
+      else {
+        BOOST_LOG(warning) << "Couldn't get requested display info, defaulting to recording entire virtual desktop"sv;
+        width  = xattr.width;
+        height = xattr.height;
+      }
     }
     else {
       width  = xattr.width;
@@ -458,6 +465,7 @@ struct x11_attr_t : public display_t {
         std::this_thread::sleep_for((next_frame - now) / 3 * 2);
       }
       while(next_frame > now) {
+        std::this_thread::sleep_for(1ns);
         now = std::chrono::steady_clock::now();
       }
       next_frame = now + delay;
@@ -513,8 +521,14 @@ struct x11_attr_t : public display_t {
 
   std::shared_ptr<hwdevice_t> make_hwdevice(pix_fmt_e pix_fmt) override {
     if(mem_type == mem_type_e::vaapi) {
-      return va::make_hwdevice(width, height);
+      return va::make_hwdevice(width, height, false);
     }
+
+#ifdef SUNSHINE_BUILD_CUDA
+    if(mem_type == mem_type_e::cuda) {
+      return cuda::make_hwdevice(width, height, false);
+    }
+#endif
 
     return std::make_shared<hwdevice_t>();
   }
@@ -526,7 +540,7 @@ struct x11_attr_t : public display_t {
 };
 
 struct shm_attr_t : public x11_attr_t {
-  xdisplay_t shm_xdisplay; // Prevent race condition with x11_attr_t::xdisplay
+  x11::xdisplay_t shm_xdisplay; // Prevent race condition with x11_attr_t::xdisplay
   xcb_connect_t xcb;
   xcb_screen_t *display;
   std::uint32_t seg;
@@ -562,6 +576,7 @@ struct shm_attr_t : public x11_attr_t {
         std::this_thread::sleep_for((next_frame - now) / 3 * 2);
       }
       while(next_frame > now) {
+        std::this_thread::sleep_for(1ns);
         now = std::chrono::steady_clock::now();
       }
       next_frame = now + delay;
@@ -672,7 +687,7 @@ struct shm_attr_t : public x11_attr_t {
 
 std::shared_ptr<display_t> x11_display(platf::mem_type_e hwdevice_type, const std::string &display_name, int framerate) {
   if(hwdevice_type != platf::mem_type_e::system && hwdevice_type != platf::mem_type_e::vaapi && hwdevice_type != platf::mem_type_e::cuda) {
-    BOOST_LOG(error) << "Could not initialize display with the given hw device type."sv;
+    BOOST_LOG(error) << "Could not initialize x11 display with the given hw device type"sv;
     return nullptr;
   }
 
@@ -713,7 +728,7 @@ std::vector<std::string> x11_display_names() {
 
   BOOST_LOG(info) << "Detecting connected monitors"sv;
 
-  xdisplay_t xdisplay { x11::OpenDisplay(nullptr) };
+  x11::xdisplay_t xdisplay { x11::OpenDisplay(nullptr) };
   if(!xdisplay) {
     return {};
   }
@@ -756,7 +771,9 @@ int load_xcb() {
 
 int load_x11() {
   // This will be called once only
-  static int x11_status = x11::init() || x11::rr::init() || x11::fix::init();
+  static int x11_status =
+    window_system == window_system_e::NONE ||
+    x11::init() || x11::rr::init() || x11::fix::init();
 
   return x11_status;
 }
@@ -805,8 +822,16 @@ void cursor_t::blend(img_t &img, int offsetX, int offsetY) {
   blend_cursor((xdisplay_t::pointer)ctx.get(), img, offsetX, offsetY);
 }
 
+xdisplay_t make_display() {
+  return OpenDisplay(nullptr);
+}
+
+void freeDisplay(_XDisplay *xdisplay) {
+  CloseDisplay(xdisplay);
+}
+
 void freeCursorCtx(cursor_ctx_t::pointer ctx) {
-  x11::CloseDisplay((xdisplay_t::pointer)ctx);
+  CloseDisplay((xdisplay_t::pointer)ctx);
 }
 } // namespace x11
 } // namespace platf

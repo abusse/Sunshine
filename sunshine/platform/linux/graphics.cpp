@@ -9,12 +9,13 @@
 // They aren't likely to change any time soon.
 #define fourcc_code(a, b, c, d) ((std::uint32_t)(a) | ((std::uint32_t)(b) << 8) | \
                                  ((std::uint32_t)(c) << 16) | ((std::uint32_t)(d) << 24))
+#define fourcc_mod_code(vendor, val) ((((uint64_t)vendor) << 56) | ((val)&0x00ffffffffffffffULL))
 #define DRM_FORMAT_R8 fourcc_code('R', '8', ' ', ' ')       /* [7:0] R */
 #define DRM_FORMAT_GR88 fourcc_code('G', 'R', '8', '8')     /* [15:0] G:R 8:8 little endian */
 #define DRM_FORMAT_ARGB8888 fourcc_code('A', 'R', '2', '4') /* [31:0] A:R:G:B 8:8:8:8 little endian */
 #define DRM_FORMAT_XRGB8888 fourcc_code('X', 'R', '2', '4') /* [31:0] x:R:G:B 8:8:8:8 little endian */
 #define DRM_FORMAT_XBGR8888 fourcc_code('X', 'B', '2', '4') /* [31:0] x:B:G:R 8:8:8:8 little endian */
-
+#define DRM_FORMAT_MOD_INVALID fourcc_mod_code(0, ((1ULL << 56) - 1))
 
 #define SUNSHINE_SHADERS_DIR SUNSHINE_ASSETS_DIR "/shaders/opengl"
 
@@ -66,6 +67,13 @@ frame_buf_t frame_buf_t::make(std::size_t count) {
   ctx.GenFramebuffers(frame_buf.size(), frame_buf.begin());
 
   return frame_buf;
+}
+
+void frame_buf_t::copy(int id, int texture, int offset_x, int offset_y, int width, int height) {
+  gl::ctx.BindFramebuffer(GL_FRAMEBUFFER, (*this)[id]);
+  gl::ctx.ReadBuffer(GL_COLOR_ATTACHMENT0 + id);
+  gl::ctx.BindTexture(GL_TEXTURE_2D, texture);
+  gl::ctx.CopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, offset_x, offset_y, width, height);
 }
 
 std::string shader_t::err_str() {
@@ -278,20 +286,61 @@ int init() {
 } // namespace gbm
 
 namespace egl {
-constexpr auto EGL_LINUX_DMA_BUF_EXT         = 0x3270;
-constexpr auto EGL_LINUX_DRM_FOURCC_EXT      = 0x3271;
-constexpr auto EGL_DMA_BUF_PLANE0_FD_EXT     = 0x3272;
-constexpr auto EGL_DMA_BUF_PLANE0_OFFSET_EXT = 0x3273;
-constexpr auto EGL_DMA_BUF_PLANE0_PITCH_EXT  = 0x3274;
+constexpr auto EGL_LINUX_DMA_BUF_EXT              = 0x3270;
+constexpr auto EGL_LINUX_DRM_FOURCC_EXT           = 0x3271;
+constexpr auto EGL_DMA_BUF_PLANE0_FD_EXT          = 0x3272;
+constexpr auto EGL_DMA_BUF_PLANE0_OFFSET_EXT      = 0x3273;
+constexpr auto EGL_DMA_BUF_PLANE0_PITCH_EXT       = 0x3274;
+constexpr auto EGL_DMA_BUF_PLANE1_FD_EXT          = 0x3275;
+constexpr auto EGL_DMA_BUF_PLANE1_OFFSET_EXT      = 0x3276;
+constexpr auto EGL_DMA_BUF_PLANE1_PITCH_EXT       = 0x3277;
+constexpr auto EGL_DMA_BUF_PLANE2_FD_EXT          = 0x3278;
+constexpr auto EGL_DMA_BUF_PLANE2_OFFSET_EXT      = 0x3279;
+constexpr auto EGL_DMA_BUF_PLANE2_PITCH_EXT       = 0x327A;
+constexpr auto EGL_DMA_BUF_PLANE3_FD_EXT          = 0x3440;
+constexpr auto EGL_DMA_BUF_PLANE3_OFFSET_EXT      = 0x3441;
+constexpr auto EGL_DMA_BUF_PLANE3_PITCH_EXT       = 0x3442;
+constexpr auto EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT = 0x3443;
+constexpr auto EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT = 0x3444;
+constexpr auto EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT = 0x3445;
+constexpr auto EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT = 0x3446;
+constexpr auto EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT = 0x3447;
+constexpr auto EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT = 0x3448;
+constexpr auto EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT = 0x3449;
+constexpr auto EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT = 0x344A;
 
 bool fail() {
   return eglGetError() != EGL_SUCCESS;
 }
 
-display_t make_display(gbm::gbm_t::pointer gbm) {
-  constexpr auto EGL_PLATFORM_GBM_MESA = 0x31D7;
+display_t make_display(std::variant<gbm::gbm_t::pointer, wl_display *, _XDisplay *> native_display) {
+  constexpr auto EGL_PLATFORM_GBM_MESA    = 0x31D7;
+  constexpr auto EGL_PLATFORM_WAYLAND_KHR = 0x31D8;
+  constexpr auto EGL_PLATFORM_X11_KHR     = 0x31D5;
 
-  display_t display = eglGetPlatformDisplay(EGL_PLATFORM_GBM_MESA, gbm, nullptr);
+  int egl_platform;
+  void *native_display_p;
+
+  switch(native_display.index()) {
+  case 0:
+    egl_platform     = EGL_PLATFORM_GBM_MESA;
+    native_display_p = std::get<0>(native_display);
+    break;
+  case 1:
+    egl_platform     = EGL_PLATFORM_WAYLAND_KHR;
+    native_display_p = std::get<1>(native_display);
+    break;
+  case 2:
+    egl_platform     = EGL_PLATFORM_X11_KHR;
+    native_display_p = std::get<2>(native_display);
+    break;
+  default:
+    BOOST_LOG(error) << "egl::make_display(): Index ["sv << native_display.index() << "] not implemented"sv;
+    return nullptr;
+  }
+
+  // native_display.left() equals native_display.right()
+  display_t display = eglGetPlatformDisplay(egl_platform, native_display_p, nullptr);
 
   if(fail()) {
     BOOST_LOG(error) << "Couldn't open EGL display: ["sv << util::hex(eglGetError()).to_string_view() << ']';
@@ -316,7 +365,6 @@ display_t make_display(gbm::gbm_t::pointer gbm) {
     "EGL_KHR_create_context",
     "EGL_KHR_surfaceless_context",
     "EGL_EXT_image_dma_buf_import",
-    "EGL_KHR_image_pixmap"
   };
 
   for(auto ext : extensions) {
@@ -376,20 +424,93 @@ std::optional<ctx_t> make_ctx(display_t::pointer display) {
 
   return ctx;
 }
+
+struct plane_attr_t {
+  EGLAttrib fd;
+  EGLAttrib offset;
+  EGLAttrib pitch;
+  EGLAttrib lo;
+  EGLAttrib hi;
+};
+
+inline plane_attr_t get_plane(std::uint32_t plane_indice) {
+  switch(plane_indice) {
+  case 0:
+    return {
+      EGL_DMA_BUF_PLANE0_FD_EXT,
+      EGL_DMA_BUF_PLANE0_OFFSET_EXT,
+      EGL_DMA_BUF_PLANE0_PITCH_EXT,
+      EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT,
+      EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT,
+    };
+  case 1:
+    return {
+      EGL_DMA_BUF_PLANE1_FD_EXT,
+      EGL_DMA_BUF_PLANE1_OFFSET_EXT,
+      EGL_DMA_BUF_PLANE1_PITCH_EXT,
+      EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT,
+      EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT,
+    };
+  case 2:
+    return {
+      EGL_DMA_BUF_PLANE2_FD_EXT,
+      EGL_DMA_BUF_PLANE2_OFFSET_EXT,
+      EGL_DMA_BUF_PLANE2_PITCH_EXT,
+      EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT,
+      EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT,
+    };
+  case 3:
+    return {
+      EGL_DMA_BUF_PLANE3_FD_EXT,
+      EGL_DMA_BUF_PLANE3_OFFSET_EXT,
+      EGL_DMA_BUF_PLANE3_PITCH_EXT,
+      EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT,
+      EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT,
+    };
+  }
+
+  // Avoid warning
+  return {};
+}
+
 std::optional<rgb_t> import_source(display_t::pointer egl_display, const surface_descriptor_t &xrgb) {
-  EGLAttrib img_attr_planes[13] {
-    EGL_LINUX_DRM_FOURCC_EXT, DRM_FORMAT_XRGB8888,
-    EGL_WIDTH, xrgb.width,
-    EGL_HEIGHT, xrgb.height,
-    EGL_DMA_BUF_PLANE0_FD_EXT, xrgb.fd,
-    EGL_DMA_BUF_PLANE0_OFFSET_EXT, xrgb.offset,
-    EGL_DMA_BUF_PLANE0_PITCH_EXT, xrgb.pitch,
-    EGL_NONE
-  };
+  EGLAttrib attribs[47];
+  int atti        = 0;
+  attribs[atti++] = EGL_WIDTH;
+  attribs[atti++] = xrgb.width;
+  attribs[atti++] = EGL_HEIGHT;
+  attribs[atti++] = xrgb.height;
+  attribs[atti++] = EGL_LINUX_DRM_FOURCC_EXT;
+  attribs[atti++] = xrgb.fourcc;
+
+  for(auto x = 0; x < 4; ++x) {
+    auto fd = xrgb.fds[x];
+
+    if(fd < 0) {
+      continue;
+    }
+
+    auto plane_attr = get_plane(x);
+
+    attribs[atti++] = plane_attr.fd;
+    attribs[atti++] = fd;
+    attribs[atti++] = plane_attr.offset;
+    attribs[atti++] = xrgb.offsets[x];
+    attribs[atti++] = plane_attr.pitch;
+    attribs[atti++] = xrgb.pitches[x];
+
+    if(xrgb.modifier != DRM_FORMAT_MOD_INVALID) {
+      attribs[atti++] = plane_attr.lo;
+      attribs[atti++] = xrgb.modifier & 0xFFFFFFFF;
+      attribs[atti++] = plane_attr.hi;
+      attribs[atti++] = xrgb.modifier >> 32;
+    }
+  }
+  attribs[atti++] = EGL_NONE;
 
   rgb_t rgb {
     egl_display,
-    eglCreateImage(egl_display, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, nullptr, img_attr_planes),
+    eglCreateImage(egl_display, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, nullptr, attribs),
     gl::tex_t::make(1)
   };
 
@@ -414,17 +535,17 @@ std::optional<nv12_t> import_target(display_t::pointer egl_display, std::array<f
     { EGL_LINUX_DRM_FOURCC_EXT, DRM_FORMAT_R8,
       EGL_WIDTH, r8.width,
       EGL_HEIGHT, r8.height,
-      EGL_DMA_BUF_PLANE0_FD_EXT, r8.fd,
-      EGL_DMA_BUF_PLANE0_OFFSET_EXT, r8.offset,
-      EGL_DMA_BUF_PLANE0_PITCH_EXT, r8.pitch,
+      EGL_DMA_BUF_PLANE0_FD_EXT, r8.fds[0],
+      EGL_DMA_BUF_PLANE0_OFFSET_EXT, r8.offsets[0],
+      EGL_DMA_BUF_PLANE0_PITCH_EXT, r8.pitches[0],
       EGL_NONE },
 
     { EGL_LINUX_DRM_FOURCC_EXT, DRM_FORMAT_GR88,
       EGL_WIDTH, gr88.width,
       EGL_HEIGHT, gr88.height,
-      EGL_DMA_BUF_PLANE0_FD_EXT, r8.fd,
-      EGL_DMA_BUF_PLANE0_OFFSET_EXT, gr88.offset,
-      EGL_DMA_BUF_PLANE0_PITCH_EXT, gr88.pitch,
+      EGL_DMA_BUF_PLANE0_FD_EXT, r8.fds[0],
+      EGL_DMA_BUF_PLANE0_OFFSET_EXT, gr88.offsets[0],
+      EGL_DMA_BUF_PLANE0_PITCH_EXT, gr88.pitches[0],
       EGL_NONE },
   };
 
@@ -618,6 +739,20 @@ std::optional<sws_t> sws_t::make(int in_width, int in_height, int out_width, int
   return std::move(sws);
 }
 
+int sws_t::blank(gl::frame_buf_t &fb, int offsetX, int offsetY, int width, int height) {
+  auto f = [&]() {
+    std::swap(offsetX, this->offsetX);
+    std::swap(offsetY, this->offsetY);
+    std::swap(width, this->out_width);
+    std::swap(height, this->out_height);
+  };
+
+  f();
+  auto fg = util::fail_guard(f);
+
+  return convert(fb);
+}
+
 std::optional<sws_t> sws_t::make(int in_width, int in_height, int out_width, int out_heigth) {
   auto tex = gl::tex_t::make(2);
   gl::ctx.BindTexture(GL_TEXTURE_2D, tex[0]);
@@ -627,28 +762,52 @@ std::optional<sws_t> sws_t::make(int in_width, int in_height, int out_width, int
 }
 
 void sws_t::load_ram(platf::img_t &img) {
-  gl::ctx.BindTexture(GL_TEXTURE_2D, tex[0]);
+  loaded_texture = tex[0];
+
+  gl::ctx.BindTexture(GL_TEXTURE_2D, loaded_texture);
   gl::ctx.TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, img.width, img.height, GL_BGRA, GL_UNSIGNED_BYTE, img.data);
 }
 
-void sws_t::load_vram(cursor_t &img, int offset_x, int offset_y, int framebuffer) {
-  gl::ctx.BindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-  gl::ctx.ReadBuffer(GL_COLOR_ATTACHMENT0);
-  gl::ctx.BindTexture(GL_TEXTURE_2D, tex[0]);
-  gl::ctx.CopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, offset_x, offset_y, in_width, in_height);
+void sws_t::load_vram(img_descriptor_t &img, int offset_x, int offset_y, int texture) {
+  // When only a sub-part of the image must be encoded...
+  const bool copy = offset_x || offset_y || img.sd.width != in_width || img.sd.height != in_height;
+  if(copy) {
+    auto framebuf = gl::frame_buf_t::make(1);
+    framebuf.bind(&texture, &texture + 1);
+
+    loaded_texture = tex[0];
+    framebuf.copy(0, loaded_texture, offset_x, offset_y, in_width, in_height);
+  }
+  else {
+    loaded_texture = texture;
+  }
 
   if(img.data) {
+    GLenum attachment = GL_COLOR_ATTACHMENT0;
+
+    gl::ctx.BindFramebuffer(GL_FRAMEBUFFER, cursor_framebuffer[0]);
+    gl::ctx.UseProgram(program[2].handle());
+
+    // When a copy has already been made...
+    if(!copy) {
+      gl::ctx.BindTexture(GL_TEXTURE_2D, texture);
+      gl::ctx.DrawBuffers(1, &attachment);
+
+      gl::ctx.Viewport(0, 0, in_width, in_height);
+      gl::ctx.DrawArrays(GL_TRIANGLES, 0, 3);
+
+      loaded_texture = tex[0];
+    }
+
     gl::ctx.BindTexture(GL_TEXTURE_2D, tex[1]);
     if(serial != img.serial) {
       serial = img.serial;
 
-      gl::ctx.TexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, img.width, img.height);
-      gl::ctx.TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, img.width, img.height, GL_BGRA, GL_UNSIGNED_BYTE, img.data);
+      gl::ctx.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img.width, img.height, 0, GL_BGRA, GL_UNSIGNED_BYTE, img.data);
     }
 
     gl::ctx.Enable(GL_BLEND);
-    GLenum attachment = GL_COLOR_ATTACHMENT0;
-    gl::ctx.BindFramebuffer(GL_FRAMEBUFFER, cursor_framebuffer[0]);
+
     gl::ctx.DrawBuffers(1, &attachment);
 
 #ifndef NDEBUG
@@ -659,18 +818,18 @@ void sws_t::load_vram(cursor_t &img, int offset_x, int offset_y, int framebuffer
     }
 #endif
 
-    gl::ctx.UseProgram(program[2].handle());
     gl::ctx.Viewport(img.x, img.y, img.width, img.height);
     gl::ctx.DrawArrays(GL_TRIANGLES, 0, 3);
 
     gl::ctx.Disable(GL_BLEND);
-  }
 
-  gl::ctx.BindTexture(GL_TEXTURE_2D, 0);
+    gl::ctx.BindTexture(GL_TEXTURE_2D, 0);
+    gl::ctx.BindFramebuffer(GL_FRAMEBUFFER, 0);
+  }
 }
 
-int sws_t::convert(nv12_t &nv12) {
-  gl::ctx.BindTexture(GL_TEXTURE_2D, tex[0]);
+int sws_t::convert(gl::frame_buf_t &fb) {
+  gl::ctx.BindTexture(GL_TEXTURE_2D, loaded_texture);
 
   GLenum attachments[] {
     GL_COLOR_ATTACHMENT0,
@@ -678,7 +837,7 @@ int sws_t::convert(nv12_t &nv12) {
   };
 
   for(int x = 0; x < sizeof(attachments) / sizeof(decltype(attachments[0])); ++x) {
-    gl::ctx.BindFramebuffer(GL_FRAMEBUFFER, nv12->buf[x]);
+    gl::ctx.BindFramebuffer(GL_FRAMEBUFFER, fb[x]);
     gl::ctx.DrawBuffers(1, &attachments[x]);
 
 #ifndef NDEBUG

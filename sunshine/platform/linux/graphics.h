@@ -12,11 +12,15 @@
 #include "sunshine/platform/common.h"
 #include "sunshine/utility.h"
 
-#define SUNSHINE_STRINGIFY(x) #x
-#define gl_drain_errors_helper(x) gl::drain_errors("line " SUNSHINE_STRINGIFY(x))
-#define gl_drain_errors gl_drain_errors_helper(__LINE__)
+#define SUNSHINE_STRINGIFY_HELPER(x) #x
+#define SUNSHINE_STRINGIFY(x) SUNSHINE_STRINGIFY_HELPER(x)
+#define gl_drain_errors_helper(x) gl::drain_errors(x)
+#define gl_drain_errors gl_drain_errors_helper(__FILE__ ":" SUNSHINE_STRINGIFY(__LINE__))
 
 extern "C" int close(int __fd);
+
+// X11 Display
+extern "C" struct _XDisplay;
 
 struct AVFrame;
 void free_frame(AVFrame *frame);
@@ -50,6 +54,17 @@ public:
 
   static frame_buf_t make(std::size_t count);
 
+  inline void bind(std::nullptr_t, std::nullptr_t) {
+    int x = 0;
+    for(auto fb : (*this)) {
+      ctx.BindFramebuffer(GL_FRAMEBUFFER, fb);
+      ctx.FramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + x, 0, 0);
+
+      ++x;
+    }
+    return;
+  }
+
   template<class It>
   void bind(It it_begin, It it_end) {
     using namespace std::literals;
@@ -68,6 +83,11 @@ public:
       ++x;
     });
   }
+
+  /**
+   * Copies a part of the framebuffer to texture
+   */
+  void copy(int id, int texture, int offset_x, int offset_y, int width, int height);
 };
 
 class shader_t {
@@ -201,15 +221,16 @@ KITTY_USING_MOVE_T(ctx_t, (std::tuple<display_t::pointer, EGLContext>), , {
 });
 
 struct surface_descriptor_t {
-  int fd;
-
   int width;
   int height;
-  int offset;
-  int pitch;
+  int fds[4];
+  std::uint32_t fourcc;
+  std::uint64_t modifier;
+  std::uint32_t pitches[4];
+  std::uint32_t offsets[4];
 };
 
-display_t make_display(gbm::gbm_t::pointer gbm);
+display_t make_display(std::variant<gbm::gbm_t::pointer, wl_display *, _XDisplay *> native_display);
 std::optional<ctx_t> make_ctx(display_t::pointer display);
 
 std::optional<rgb_t> import_source(
@@ -230,15 +251,42 @@ public:
   std::vector<std::uint8_t> buffer;
 };
 
+// Allow cursor and the underlying image to be kept together
+class img_descriptor_t : public cursor_t {
+public:
+  ~img_descriptor_t() {
+    reset();
+  }
+
+  void reset() {
+    for(auto x = 0; x < 4; ++x) {
+      if(sd.fds[x] >= 0) {
+        close(sd.fds[x]);
+
+        sd.fds[x] = -1;
+      }
+    }
+  }
+
+  surface_descriptor_t sd;
+
+  // Increment sequence when new rgb_t needs to be created
+  std::uint64_t sequence;
+};
+
 class sws_t {
 public:
   static std::optional<sws_t> make(int in_width, int in_height, int out_width, int out_heigth, gl::tex_t &&tex);
   static std::optional<sws_t> make(int in_width, int in_height, int out_width, int out_heigth);
 
-  int convert(nv12_t &nv12);
+  // Convert the loaded image into the first two framebuffers
+  int convert(gl::frame_buf_t &fb);
+
+  // Make an area of the image black
+  int blank(gl::frame_buf_t &fb, int offsetX, int offsetY, int width, int height);
 
   void load_ram(platf::img_t &img);
-  void load_vram(cursor_t &img, int offset_x, int offset_y, int framebuffer);
+  void load_vram(img_descriptor_t &img, int offset_x, int offset_y, int texture);
 
   void set_colorspace(std::uint32_t colorspace, std::uint32_t color_range);
 
@@ -248,6 +296,7 @@ public:
 
   // The cursor image will be blended into this framebuffer
   gl::frame_buf_t cursor_framebuffer;
+  gl::frame_buf_t copy_framebuffer;
 
   // Y - shader, UV - shader, Cursor - shader
   gl::program_t program[3];
@@ -256,6 +305,9 @@ public:
   int out_width, out_height;
   int in_width, in_height;
   int offsetX, offsetY;
+
+  // Pointer to the texture to be converted to nv12
+  int loaded_texture;
 
   // Store latest cursor for load_vram
   std::uint64_t serial;
