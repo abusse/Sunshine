@@ -3,6 +3,8 @@
 
 #include <vector>
 
+#include <CoreGraphics/CoreGraphics.h>
+
 namespace dyn {
 typedef void (*apiproc)(void);
 
