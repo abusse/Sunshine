@@ -6,7 +6,7 @@ PortGroup           github 1.0
 PortGroup           boost 1.0
 
 github.setup        abusse sunshine macos-dev
-version             20210825
+version             20211213
 
 categories          multimedia
 platforms           darwin
@@ -35,12 +35,14 @@ cmake.out_of_source yes
 
 destroot {
     xinstall -d -m 755 ${destroot}${prefix}/etc/${name}
-    xinstall ${worksrcpath}/assets/apps_mac.json ${destroot}${prefix}/etc/${name}/apps.json
+    xinstall ${worksrcpath}/assets/apps_mac.json ${destroot}${prefix}/etc/${name}
     xinstall ${worksrcpath}/assets/box.png ${destroot}${prefix}/etc/${name}
     xinstall ${worksrcpath}/assets/sunshine.conf ${destroot}${prefix}/etc/${name}
 
     xinstall -d -m 755 ${destroot}${prefix}/etc/${name}/web
     xinstall {*}[glob ${worksrcpath}/assets/web/*.html] ${destroot}${prefix}/etc/${name}/web
+    xinstall -d -m 755 ${destroot}${prefix}/etc/${name}/web/third_party
+    xinstall {*}[glob ${worksrcpath}/assets/web/third_party/*] ${destroot}${prefix}/etc/${name}/web/third_party
 
     xinstall ${workpath}/build/${name} ${destroot}${prefix}/bin
 }
