@@ -966,9 +966,9 @@ std::optional<session_t> make_session(const encoder_t &encoder, const config_t &
   }
 
   if(video_format[encoder_t::CBR]) {
-    auto bitrate        = config.bitrate * 1000;
+    auto bitrate        = config.bitrate * (hardware ? 1000 : 800); // software bitrate overshoots by ~20%
     ctx->rc_max_rate    = bitrate;
-    ctx->rc_buffer_size = bitrate / config.framerate;
+    ctx->rc_buffer_size = bitrate / 10;
     ctx->bit_rate       = bitrate;
     ctx->rc_min_rate    = bitrate;
   }
@@ -1316,7 +1316,7 @@ void captureThreadSync() {
       ctx.shutdown_event->raise(true);
       ctx.join_event->raise(true);
     }
-  });
+    });
 
   while(encode_run_sync(synced_session_ctxs, ctx) == encode_e::reinit) {}
 }
@@ -1332,7 +1332,7 @@ void capture_async(
   auto lg     = util::fail_guard([&]() {
     images->stop();
     shutdown_event->raise(true);
-  });
+      });
 
   auto ref = capture_thread_async.ref();
   if(!ref) {
