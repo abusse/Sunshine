@@ -14,7 +14,7 @@ namespace fs = std::filesystem;
 
 namespace platf {
 std::unique_ptr<deinit_t> init() {
-  if (!CGPreflightScreenCaptureAccess()) {
+  if(!CGPreflightScreenCaptureAccess()) {
     BOOST_LOG(error) << "No screen capture permission!"sv;
     BOOST_LOG(error) << "Please activate it in 'System Preferences' -> 'Privacy' -> 'Screen Recording'"sv;
     CGRequestScreenCaptureAccess();

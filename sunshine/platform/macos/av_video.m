@@ -132,8 +132,8 @@
     }];
 
     dispatch_queue_attr_t qos       = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,
-                                                                              QOS_CLASS_USER_INITIATED,
-                                                                              DISPATCH_QUEUE_PRIORITY_HIGH);
+            QOS_CLASS_USER_INITIATED,
+            DISPATCH_QUEUE_PRIORITY_HIGH);
     dispatch_queue_t recordingQueue = dispatch_queue_create("videoCaptureQueue", qos);
     [videoOutput setSampleBufferDelegate:self queue:recordingQueue];
 
