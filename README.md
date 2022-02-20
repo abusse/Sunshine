@@ -139,7 +139,7 @@ ln -s ../opt/openssl/include/openssl .
 ```
 
 #### Compilation:
-- `git clone https://github.com/loki-47-6F-64/sunshine.git --recurse-submodules`
+- `git clone https://github.com/SunshineStream/Sunshine.git --recurse-submodules`
 - `cd sunshine && mkdir build && cd build`
 - `cmake ..`
 - `make -j ${nproc}`

@@ -1743,7 +1743,6 @@ util::Either<buffer_t, int> cuda_make_hwdevice_ctx(platf::hwdevice_t *base) {
   return hw_device_buf;
 }
 
-
 #ifdef _WIN32
 }
 

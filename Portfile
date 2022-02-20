@@ -21,7 +21,7 @@ post-fetch {
 description         Sunshine is a Gamestream host for Moonlight
 long_description    Sunshine is a Gamestream host for Moonlight
 
-homepage            https://github.com/loki-47-6F-64/sunshine
+homepage            https://github.com/SunshineStream/Sunshine
 
 depends_lib         port:avahi port:ffmpeg port:libopus
 
