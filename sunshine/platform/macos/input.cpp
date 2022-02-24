@@ -16,6 +16,7 @@ using namespace std::literals;
 struct macos_input_t {
 public:
   CGDirectDisplayID display;
+  CGFloat displayScaling;
   CGEventSourceRef source;
 
   // keyboard related stuff
@@ -349,7 +350,9 @@ void move_mouse(input_t &input, int deltaX, int deltaY) {
 }
 
 void abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y) {
-  CGPoint location = CGPointMake(x, y);
+  auto scaling = ((macos_input_t *)input.get())->displayScaling;
+
+  CGPoint location = CGPointMake(x * scaling, y * scaling);
 
   post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location, 0);
 }
@@ -417,7 +420,13 @@ input_t input() {
 
   // If we don't use the main display in the future, this has to be adapted
   macos_input->display = CGMainDisplayID();
-  macos_input->source  = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+
+  // Input coordinates are based on the virtual resolution not the physical, so we need the scaling factor
+  CGDisplayModeRef mode       = CGDisplayCopyDisplayMode(macos_input->display);
+  macos_input->displayScaling = ((CGFloat)CGDisplayPixelsWide(macos_input->display)) / ((CGFloat)CGDisplayModeGetPixelWidth(mode));
+  CFRelease(mode);
+
+  macos_input->source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
 
   macos_input->kb_event = CGEventCreate(macos_input->source);
   macos_input->kb_flags = 0;

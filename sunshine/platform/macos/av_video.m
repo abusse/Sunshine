@@ -29,12 +29,13 @@
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate {
   self = [super init];
 
-  CGImageRef screenshot = CGDisplayCreateImage(displayID);
+  CGDisplayModeRef mode = CGDisplayCopyDisplayMode(displayID);
 
   self.displayID        = displayID;
   self.pixelFormat      = kCVPixelFormatType_32BGRA;
-  self.frameWidth       = CGImageGetWidth(screenshot);
-  self.frameHeight      = CGImageGetHeight(screenshot);
+  self.frameWidth       = CGDisplayModeGetPixelWidth(mode);
+  self.frameHeight      = CGDisplayModeGetPixelHeight(mode);
+  self.scaling          = CGDisplayPixelsWide(displayID) / CGDisplayModeGetPixelWidth(mode);
   self.paddingLeft      = 0;
   self.paddingRight     = 0;
   self.paddingTop       = 0;
@@ -45,7 +46,7 @@
   self.captureCallbacks = [[NSMapTable alloc] init];
   self.captureSignals   = [[NSMapTable alloc] init];
 
-  CFRelease(screenshot);
+  CFRelease(mode);
 
   AVCaptureScreenInput *screenInput = [[AVCaptureScreenInput alloc] initWithDisplayID:self.displayID];
   [screenInput setMinFrameDuration:self.minFrameDuration];

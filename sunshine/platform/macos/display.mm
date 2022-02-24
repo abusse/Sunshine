@@ -174,13 +174,8 @@ std::shared_ptr<display_t> display(platf::mem_type_e hwdevice_type, const std::s
     return nullptr;
   }
 
-  auto tmp_image = display->alloc_img();
-  if(display->dummy_img(tmp_image.get())) {
-    BOOST_LOG(error) << "Failed to capture initial frame"sv;
-    return nullptr;
-  }
-  display->width  = tmp_image->width;
-  display->height = tmp_image->height;
+  display->width  = display->av_capture.frameWidth;
+  display->height = display->av_capture.frameHeight;
 
   return display;
 }
